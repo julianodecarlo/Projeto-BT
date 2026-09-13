@@ -53,26 +53,30 @@ export function BtProvider({ children }: { children: ReactNode }) {
   const createBt = useCallback(async (numero: string, data: string): Promise<BtReport | null> => {
     const { data: btData, error } = await supabase
       .from('bt_reports')
-      .insert({
-        numero,
-        data,
-        status: 'rascunho',
-        instituicao: 'UNIVERSIDADE ESTADUAL PAULISTA - CAMPUS DE BOTUCATU',
-        unidade: 'INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU - RECEITA PRÓPRIA',
-      })
-      .select()
-      .single();
+      .insert([
+        {
+          numero,
+          data,
+          status: 'rascunho',
+          instituicao: 'UNIVERSIDADE ESTADUAL PAULISTA - CAMPUS DE BOTUCATU',
+          unidade: 'INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU - RECEITA PRÓPRIA',
+        },
+      ])
+      .select();
+
     if (error) {
-      console.error('Error creating BT:', error);
+      console.error('Error creating BT:', error.message || error);
       return null;
     }
-    setCurrentBt(btData as BtReport);
-    return btData as BtReport;
+
+    if (!btData || btData.length === 0) return null;
+
+    const created = btData[0] as BtReport;
+    setCurrentBt(created);
+    return created;
   }, []);
 
-  // Cascade recalculation: when a BT is edited, recalculate all subsequent BTs' running balances
   const cascadeRecalculate = useCallback(async (fromBtId: string) => {
-    // Get the edited BT and all subsequent BTs ordered by date
     const { data: editedBt } = await supabase
       .from('bt_reports')
       .select('*')
@@ -80,7 +84,6 @@ export function BtProvider({ children }: { children: ReactNode }) {
       .maybeSingle();
     if (!editedBt) return;
 
-    // Get all BTs on or after this date, ordered by date
     const { data: subsequentBts } = await supabase
       .from('bt_reports')
       .select('*')
@@ -89,16 +92,13 @@ export function BtProvider({ children }: { children: ReactNode }) {
 
     if (!subsequentBts || subsequentBts.length === 0) return;
 
-    // Get all accounts
     const { data: accs } = await supabase.from('accounts').select('*').order('ordem');
     if (!accs) return;
 
-    // For each account, recalculate running balances across all BTs
     for (const acc of accs as Account[]) {
       let runningBalance = new Decimal(acc.saldo_inicial || 0);
 
       for (const bt of subsequentBts as BtReport[]) {
-        // Get transactions for this BT and account
         const { data: txs } = await supabase
           .from('transactions')
           .select('*')
@@ -108,7 +108,6 @@ export function BtProvider({ children }: { children: ReactNode }) {
 
         if (!txs || txs.length === 0) continue;
 
-        // Recalculate each transaction's saldo_anterior and saldo_final
         for (const tx of txs) {
           const saldoAnterior = runningBalance;
           const v = new Decimal(tx.valor || 0);
@@ -123,25 +122,27 @@ export function BtProvider({ children }: { children: ReactNode }) {
 
           runningBalance = saldoFinal;
         }
-
-        // Update the account's saldo_inicial to the last running balance for the next BT
-        // (only for the first BT in the chain - the account's saldo_inicial is the starting point)
       }
     }
   }, []);
 
   useEffect(() => {
     (async () => {
-      await seedDefaultAccounts();
-      await fetchAccounts();
-      const { data: lastBt } = await supabase
-        .from('bt_reports')
-        .select('*')
-        .order('data', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (lastBt) setCurrentBt(lastBt as BtReport);
-      setLoading(false);
+      try {
+        await seedDefaultAccounts();
+        await fetchAccounts();
+        const { data: lastBt } = await supabase
+          .from('bt_reports')
+          .select('*')
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (lastBt) setCurrentBt(lastBt as BtReport);
+      } catch (err) {
+        console.error('Erro ao inicializar BtProvider:', err);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [fetchAccounts]);
 
