@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Plus, Trash2, CheckCircle, AlertTriangle, FileText, Handshake, Check, Search, CreditCard, Clock } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, AlertTriangle, FileText, Handshake, Check, Receipt } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, Badge, EmptyState } from '@/components/ui/Field';
@@ -13,6 +13,7 @@ interface MoneyInputProps {
   onValueChange: (value: number) => void;
   className?: string;
   placeholder?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
 const formatDigits = (digits: string): string => {
@@ -24,23 +25,39 @@ const formatDigits = (digits: string): string => {
   return `${intFormatted},${decPart}`;
 };
 
-function MoneyInput({ value, onValueChange, className, placeholder }: MoneyInputProps) {
-  const [display, setDisplay] = useState(() =>
-    value != null && value !== 0 ? formatDigits(Math.round(value * 100).toString()) : ''
-  );
+function MoneyInput({ value, onValueChange, className, placeholder, onKeyDown }: MoneyInputProps) {
+  const [display, setDisplay] = useState<string>('');
   const [focused, setFocused] = useState(false);
+
+  const format = (digits: string, neg: boolean): string => {
+    if (!digits) return '';
+    const cents = parseInt(digits, 10);
+    const intPart = Math.floor(cents / 100).toString();
+    const decPart = (cents % 100).toString().padStart(2, '0');
+    const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return `${neg ? '-' : ''}${intFormatted},${decPart}`;
+  };
+
+  const isNegative = (v: number | null | undefined): boolean => v != null && v < 0;
+  const centsFrom = (v: number | null | undefined): string =>
+    v != null && v !== 0 ? Math.round(Math.abs(v) * 100).toString() : '';
 
   useEffect(() => {
     if (!focused) {
-      setDisplay(value != null && value !== 0 ? formatDigits(Math.round(value * 100).toString()) : '');
+      setDisplay(format(centsFrom(value), isNegative(value)));
     }
   }, [value, focused]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '') || '';
-    setDisplay(formatDigits(digits));
-    const cents = digits ? parseInt(digits, 10) : 0;
-    onValueChange(cents / 100);
+    const neg = e.target.value.trim().startsWith('-');
+    const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '');
+    setDisplay(format(digits, neg));
+    if (!digits) {
+      onValueChange(0);
+      return;
+    }
+    const abs = parseInt(digits, 10) / 100;
+    onValueChange(neg ? -abs : abs);
   };
 
   return (
@@ -50,6 +67,7 @@ function MoneyInput({ value, onValueChange, className, placeholder }: MoneyInput
       value={display}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
+      onKeyDown={onKeyDown}
       onChange={handleChange}
       className={`text-right py-1.5 bg-blue-50/40 border border-blue-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition-all ${className || ''}`}
       placeholder={placeholder}
@@ -165,11 +183,22 @@ export default function Conciliacao() {
     const add = (accId: string, v: number) => map.set(accId, (map.get(accId) || 0) + v);
     for (const c of openItems.cheques) add(c.account_id, c.valor);
     for (const p of openItems.payments) add(p.account_id, p.valor);
-    for (const d of openItems.deposits) add(d.account_id, -d.valor);
+    for (const d of openItems.deposits) add(d.account_id, d.valor);
     return map;
   }, [openItems]);
 
   const getPendencias = (accId: string) => pendenciasPorConta.get(accId) ?? 0;
+
+  const handleNav = (e: React.KeyboardEvent<HTMLInputElement>, nextCell: string | null) => {
+    if (e.key !== 'Tab' && e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!nextCell) return;
+    requestAnimationFrame(() => {
+      const td = document.querySelector<HTMLTableCellElement>(`[data-recon-cell="${nextCell}"]`);
+      const input = td?.querySelector<HTMLInputElement>('input');
+      if (input) { input.focus(); input.select(); }
+    });
+  };
 
   // Cheques handlers
   const addCheque = async () => {
@@ -312,7 +341,7 @@ export default function Conciliacao() {
   const totalChequesCompensar = toNumber(sumDecimal(openItems.cheques.map(c => c.valor)));
   const totalDeposits = toNumber(sumDecimal(openItems.deposits.map(d => d.valor)));
   const totalPayments = toNumber(sumDecimal(openItems.payments.map(p => p.valor)));
-  const divergentCount = reconciliations.filter(r => r.divergente).length;
+  const divergentCount = accounts.filter(a => a.ativo && reconciliations.some(r => r.account_id === a.id && r.divergente && r.saldo_extrato !== 0)).length;
   const totalConveniosPorConta = new Map<string, number>();
   for (const c of convenios) {
     if (!c.finance_account_id) continue;
@@ -377,7 +406,7 @@ export default function Conciliacao() {
         <Card className="p-3">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
-              <AlertTriangle className="w-5 h-5 text-amber-600" />
+              <Receipt className="w-5 h-5 text-amber-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Cheques a Compensar</p>
@@ -391,8 +420,8 @@ export default function Conciliacao() {
               <FileText className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-xs text-slate-500">Depósitos Pendentes</p>
-              <p className="text-base font-bold text-blue-700">{formatCurrency(totalDeposits)}</p>
+              <p className="text-xs text-slate-500">Depósitos / Pagamentos Pendentes</p>
+              <p className="text-base font-bold text-blue-700">{formatCurrency(totalDeposits + totalPayments)}</p>
             </div>
           </div>
         </Card>
@@ -464,23 +493,25 @@ export default function Conciliacao() {
                       <p className="text-xs text-slate-400">{acc.codigo}</p>
                     </td>
                     <td className="px-4 py-2.5 text-right font-medium text-slate-600">{formatCurrency(saldoOrc)}</td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td data-recon-cell={`extrato:${acc.id}`} className="px-4 py-2.5 text-right">
                       <MoneyInput
                         value={saldoExtrato}
                         onValueChange={(v) => updateRecon(acc.id, 'saldo_extrato', v)}
+                        onKeyDown={(e) => handleNav(e, `rendimento:${acc.id}`)}
                         className="w-32"
                         placeholder="0,00"
                       />
                     </td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td data-recon-cell={`rendimento:${acc.id}`} className="px-4 py-2.5 text-right">
                       <MoneyInput
                         value={recon?.rendimento_acumulado ?? 0}
                         onValueChange={(v) => updateRecon(acc.id, 'rendimento_acumulado', v)}
+                        onKeyDown={(e) => handleNav(e, activeAccounts[activeAccounts.findIndex(x => x.id === acc.id) + 1] ? `extrato:${activeAccounts[activeAccounts.findIndex(x => x.id === acc.id) + 1].id}` : null)}
                         className="w-28"
                         placeholder="0,00"
                       />
                     </td>
-                    <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-blue-700' : pend > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                    <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-red-700' : pend > 0 ? 'text-blue-700' : 'text-slate-400'}`}>
                       {formatCurrency(pend)}
                     </td>
                     <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{formatCurrency(saldoConc)}</td>
@@ -524,7 +555,7 @@ export default function Conciliacao() {
                 <Input value={chequeNumero} onChange={(e) => setChequeNumero(e.target.value)} placeholder="000123" />
               </Field>
               <Field label="Valor (R$)">
-                <Input type="number" step="0.01" value={chequeValor} onChange={(e) => setChequeValor(e.target.value)} placeholder="0,00" />
+                <MoneyInput value={Number(chequeValor) || null} onValueChange={(v) => setChequeValor(v ? String(v) : '')} />
               </Field>
               <Field label="Beneficiário" className="col-span-2">
                 <Input value={chequeBenef} onChange={(e) => setChequeBenef(e.target.value)} placeholder="Nome do beneficiário" />
@@ -565,7 +596,7 @@ export default function Conciliacao() {
                 </Select>
               </Field>
               <Field label="Valor (R$)">
-                <Input type="number" step="0.01" value={depositValor} onChange={(e) => setDepositValor(e.target.value)} placeholder="0,00" />
+                <MoneyInput value={Number(depositValor) || null} onValueChange={(v) => setDepositValor(v ? String(v) : '')} />
               </Field>
               <Field label="Descrição">
                 <Input value={depositDesc} onChange={(e) => setDepositDesc(e.target.value)} placeholder="Origem do depósito" />
@@ -633,8 +664,8 @@ export default function Conciliacao() {
                 {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
               </Select>
             </Field>
-            <Field label="Valor a Pagar (R$)">
-              <Input type="number" step="0.01" value={paymentValor} onChange={(e) => setPaymentValor(e.target.value)} placeholder="0,00" />
+            <Field label="Valor (+ ou -)">
+              <MoneyInput value={Number(paymentValor) || null} onValueChange={(v) => setPaymentValor(v ? String(v) : '')} />
             </Field>
             <Field label="Data do Lançamento">
               <Input type="date" value={paymentData} onChange={(e) => setPaymentData(e.target.value)} />
@@ -690,35 +721,7 @@ export default function Conciliacao() {
       </Card>
       </div>
 
-      {/* Pendências resolvidas no BT atual */}
-      {resolutions.filter(r => r.bt_report_id === currentBt.id).length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Clock className="w-4 h-4 text-slate-500" />
-            <h3 className="text-sm font-bold text-slate-800">Baixas dadas neste BT</h3>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {resolutions
-              .filter(r => r.bt_report_id === currentBt.id)
-              .map(r => {
-                const label =
-                  r.kind === 'cheque'
-                    ? `Cheque #${cheques.find(c => c.id === r.ref_id)?.numero ?? '—'} compensado`
-                    : r.kind === 'deposito'
-                      ? `Depósito "${deposits.find(d => d.id === r.ref_id)?.descricao || 'sem descrição'}" concluído`
-                      : `Pagamento "${payments.find(p => p.id === r.ref_id)?.descricao || 'sem descrição'}" concluído`;
-                return (
-                  <span key={r.id} className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-3 py-1 text-xs">
-                    <CheckCircle className="w-3.5 h-3.5" /> {label}
-                  </span>
-                );
-              })}
-          </div>
-        </Card>
-      )}
-
-      <p className="text-xs text-slate-400 px-1 flex items-center gap-1.5">
-        <Search className="w-3.5 h-3.5" />
+      <p className="text-xs text-slate-400 px-1">
         As baixas (Cheque Compensado, Concluído, Concluir Pagamento) valem apenas para o BT atual e não alteram saldos contábeis ou orçamentários.
       </p>
     </div>
