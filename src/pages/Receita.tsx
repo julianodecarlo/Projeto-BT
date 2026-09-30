@@ -508,11 +508,12 @@ export default function Receita() {
                 <th className="px-4 py-2 text-left font-semibold">Subalínea</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Contábil</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Financeiro</th>
+                <th className="px-4 py-2 text-right font-semibold">Total</th>
               </tr>
             </thead>
             <tbody>
               {comSaldo.length === 0 ? (
-                <tr><td colSpan={4} className="text-center text-slate-400 py-4 text-xs">Nenhuma subalínea com saldo</td></tr>
+                <tr><td colSpan={5} className="text-center text-slate-400 py-4 text-xs">Nenhuma subalínea com saldo</td></tr>
               ) : comSaldo.map(x => (
                 <tr key={`${x.codigo}-${x.nome}`} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2.5 font-mono text-xs font-semibold text-slate-600">{x.codigo}</td>
@@ -523,6 +524,9 @@ export default function Receita() {
                   <td className={`px-4 py-2.5 text-right font-semibold ${x.saldoFin.isNegative() ? 'text-red-600' : 'text-emerald-700'}`}>
                     {formatCurrency(toNumber(x.saldoFin))}
                   </td>
+                  <td className={`px-4 py-2.5 text-right font-bold ${x.saldoCont.plus(x.saldoFin).isNegative() ? 'text-red-600' : 'text-slate-800'}`}>
+                    {formatCurrency(toNumber(x.saldoCont.plus(x.saldoFin)))}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -531,9 +535,10 @@ export default function Receita() {
                 <td className="px-4 py-2.5 text-slate-800" colSpan={2}>Total</td>
                 <td className="px-4 py-2.5 text-right text-slate-800">{formatCurrency(totalContResumo)}</td>
                 <td className="px-4 py-2.5 text-right text-slate-800">{formatCurrency(totalFinResumo)}</td>
+                <td className="px-4 py-2.5 text-right text-slate-800">{formatCurrency(totalGeralResumo)}</td>
               </tr>
               <tr className="bg-slate-800 text-white">
-                <td className="px-4 py-3 font-bold" colSpan={2}>Saldo Total Geral</td>
+                <td className="px-4 py-3 font-bold" colSpan={3}>Saldo Total Geral</td>
                 <td className="px-4 py-3 text-right text-base font-bold" colSpan={2}>{formatCurrency(totalGeralResumo)}</td>
               </tr>
             </tfoot>
