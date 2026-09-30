@@ -63,15 +63,28 @@ export default function Receita() {
   const addSubalinea = async () => {
     if (!newSubCodigo.trim() || !newSubDesc.trim()) return;
     const maxOrdem = subalinhas.length > 0 ? Math.max(...subalinhas.map(s => s.ordem)) : 0;
-    await supabase.from('subalinhas').insert({
+    const { data: sub } = await supabase.from('subalinhas').insert({
       codigo: newSubCodigo.trim(),
       descricao: newSubDesc.trim(),
       ordem: maxOrdem + 1,
       ativo: true,
-    });
+    }).select().single();
+
+    // Incorpora a nova subalínea com saldo zero nas duas tabelas do BT ativo
+    if (currentBt && sub) {
+      const nome = `${sub.codigo} - ${sub.descricao}`;
+      const rows = [
+        { bt_report_id: currentBt.id, subalinea: nome, tipo: 'contabil', saldo_anterior: 0, arrecadacao: 0, saldo_final_contabil: 0, caixa: 0, bancos: 0, saldo_final_financeiro: 0, account_id: null, ordem: 0 },
+        { bt_report_id: currentBt.id, subalinea: nome, tipo: 'financeira', saldo_anterior: 0, arrecadacao: 0, saldo_final_contabil: 0, caixa: 0, bancos: 0, saldo_final_financeiro: 0, account_id: null, ordem: 0 },
+      ];
+      const { data: revs, error } = await supabase.from('revenue_own').insert(rows).select();
+      if (!error && revs) setRevenues(prev => [...prev, ...(revs as RevenueOwn[])]);
+    }
+
     setNewSubCodigo(''); setNewSubDesc('');
     setShowSubForm(false);
-    fetchAll();
+    const { data: subs } = await supabase.from('subalinhas').select('*').order('ordem');
+    if (subs) setSubalinhas(subs as Subalinea[]);
   };
 
   const startEditSub = (sub: Subalinea) => {
@@ -165,6 +178,48 @@ export default function Receita() {
     setRevenues(revenues.filter(r => r.id !== id));
   };
 
+  // Edição direta nas células: recalcula em tempo real e grava ao sair do campo
+  const [cellEdits, setCellEdits] = useState<Record<string, string>>({});
+  const getCell = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') =>
+    cellEdits[`${r.id}:${field}`] ?? String(r[field] ?? '');
+  const setCell = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos', v: string) =>
+    setCellEdits(prev => ({ ...prev, [`${r.id}:${field}`]: v }));
+
+  const effective = (r: RevenueOwn): RevenueOwn => {
+    if (r.tipo === 'contabil') {
+      const arrec = toDecimal(getCell(r, 'arrecadacao') || 0);
+      return { ...r, arrecadacao: arrec.toNumber(), saldo_final_contabil: toDecimal(r.saldo_anterior).plus(arrec).toNumber() };
+    }
+    const caixa = toDecimal(getCell(r, 'caixa') || 0);
+    const bancos = toDecimal(getCell(r, 'bancos') || 0);
+    return { ...r, caixa: caixa.toNumber(), bancos: bancos.toNumber(), saldo_final_financeiro: caixa.plus(bancos).toNumber() };
+  };
+
+  const commitCell = async (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => {
+    const key = `${r.id}:${field}`;
+    if (!(key in cellEdits)) return;
+    const eff = effective(r);
+    const payload = r.tipo === 'contabil'
+      ? { arrecadacao: eff.arrecadacao, saldo_final_contabil: eff.saldo_final_contabil }
+      : { caixa: eff.caixa, bancos: eff.bancos, saldo_final_financeiro: eff.saldo_final_financeiro };
+    const { data, error } = await supabase.from('revenue_own').update(payload).eq('id', r.id).select().single();
+    setCellEdits(prev => { const n = { ...prev }; delete n[key]; return n; });
+    if (!error && data) setRevenues(prev => prev.map(x => (x.id === r.id ? (data as RevenueOwn) : x)));
+  };
+
+  const cellInput = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => (
+    <input
+      type="number"
+      step="0.01"
+      value={getCell(r, field)}
+      onChange={(e) => setCell(r, field, e.target.value)}
+      onBlur={() => commitCell(r, field)}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      className="w-24 text-right bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-1 py-1 outline-none transition-colors"
+      placeholder="0,00"
+    />
+  );
+
   if (!currentBt) {
     return (
       <div className="p-6">
@@ -173,8 +228,34 @@ export default function Receita() {
     );
   }
 
-  const revContabil = revenues.filter(r => r.tipo === 'contabil');
-  const revFinanceira = revenues.filter(r => r.tipo === 'financeira');
+  const revContabil = revenues.filter(r => r.tipo === 'contabil').map(effective);
+  const revFinanceira = revenues.filter(r => r.tipo === 'financeira').map(effective);
+
+  // Consolidação por subalínea (somente saldos diferentes de zero)
+  const parseSubLabel = (label: string) => {
+    const idx = label.indexOf(' - ');
+    return idx === -1 ? { codigo: label, nome: label } : { codigo: label.slice(0, idx), nome: label.slice(idx + 3) };
+  };
+  const consolidado: { codigo: string; nome: string; saldoCont: Decimal; saldoFin: Decimal }[] = [];
+  const seen = new Set<string>();
+  for (const sub of subalinhas) {
+    const label = `${sub.codigo} - ${sub.descricao}`;
+    seen.add(label);
+    const c = revContabil.find(r => r.subalinea === label);
+    const f = revFinanceira.find(r => r.subalinea === label);
+    consolidado.push({ codigo: sub.codigo, nome: sub.descricao, saldoCont: toDecimal(c?.saldo_final_contabil ?? 0), saldoFin: toDecimal(f?.saldo_final_financeiro ?? 0) });
+  }
+  for (const label of new Set(revenues.map(r => r.subalinea))) {
+    if (seen.has(label)) continue;
+    const { codigo, nome } = parseSubLabel(label);
+    const c = revContabil.find(r => r.subalinea === label);
+    const f = revFinanceira.find(r => r.subalinea === label);
+    consolidado.push({ codigo, nome, saldoCont: toDecimal(c?.saldo_final_contabil ?? 0), saldoFin: toDecimal(f?.saldo_final_financeiro ?? 0) });
+  }
+  const comSaldo = consolidado.filter(x => !x.saldoCont.isZero() || !x.saldoFin.isZero());
+  const totalContResumo = comSaldo.reduce((acc, x) => acc.plus(x.saldoCont), new Decimal(0)).toNumber();
+  const totalFinResumo = comSaldo.reduce((acc, x) => acc.plus(x.saldoFin), new Decimal(0)).toNumber();
+  const totalGeralResumo = totalContResumo + totalFinResumo;
 
   return (
     <div className="p-6 space-y-4">
@@ -254,7 +335,7 @@ export default function Receita() {
             </div>
           </div>
           <Button size="sm" onClick={() => { setRevTipo('contabil'); setShowRevForm(!showRevForm); }}>
-            <Plus className="w-3.5 h-3.5" /> Nova Linha
+            <Plus className="w-3.5 h-3.5" /> Lançamento
           </Button>
         </div>
         {showRevForm && revTipo === 'contabil' && (
@@ -299,7 +380,7 @@ export default function Receita() {
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50 group">
                   <td className="px-4 py-2.5 text-slate-700">{r.subalinea}</td>
                   <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.saldo_anterior)}</td>
-                  <td className="px-4 py-2.5 text-right text-emerald-600 font-semibold">{formatCurrency(r.arrecadacao)}</td>
+                  <td className="px-2 py-1.5 text-right">{cellInput(r, 'arrecadacao')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_contabil)}</td>
                   <td className="px-2 py-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => deleteRevenue(r.id)} className="text-slate-400 hover:text-red-500">
@@ -336,7 +417,7 @@ export default function Receita() {
             </div>
           </div>
           <Button size="sm" onClick={() => { setRevTipo('financeira'); setShowRevForm(!showRevForm); }}>
-            <Plus className="w-3.5 h-3.5" /> Nova Linha
+            <Plus className="w-3.5 h-3.5" /> Lançamento
           </Button>
         </div>
         {showRevForm && revTipo === 'financeira' && (
@@ -385,8 +466,8 @@ export default function Receita() {
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50 group">
                   <td className="px-4 py-2.5 text-slate-700">{r.subalinea}</td>
                   <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.saldo_anterior)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.caixa)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.bancos)}</td>
+                  <td className="px-2 py-1.5 text-right">{cellInput(r, 'caixa')}</td>
+                  <td className="px-2 py-1.5 text-right">{cellInput(r, 'bancos')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_financeiro)}</td>
                   <td className="px-2 py-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => deleteRevenue(r.id)} className="text-slate-400 hover:text-red-500">
@@ -409,6 +490,53 @@ export default function Receita() {
                 </tr>
               )}
             </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Resumo / Consolidação por Subalínea */}
+      <Card className="overflow-hidden">
+        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+          <h3 className="text-sm font-bold text-slate-800">Resumo por Subalínea</h3>
+          <p className="text-xs text-slate-500 mt-0.5">Consolidação de todas as subalíneas com saldo diferente de zero</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider">
+                <th className="px-4 py-2 text-left font-semibold">Código</th>
+                <th className="px-4 py-2 text-left font-semibold">Subalínea</th>
+                <th className="px-4 py-2 text-right font-semibold">Saldo Contábil</th>
+                <th className="px-4 py-2 text-right font-semibold">Saldo Financeiro</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comSaldo.length === 0 ? (
+                <tr><td colSpan={4} className="text-center text-slate-400 py-4 text-xs">Nenhuma subalínea com saldo</td></tr>
+              ) : comSaldo.map(x => (
+                <tr key={`${x.codigo}-${x.nome}`} className="border-t border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-2.5 font-mono text-xs font-semibold text-slate-600">{x.codigo}</td>
+                  <td className="px-4 py-2.5 text-slate-700">{x.nome}</td>
+                  <td className={`px-4 py-2.5 text-right font-semibold ${x.saldoCont.isNegative() ? 'text-red-600' : 'text-blue-700'}`}>
+                    {formatCurrency(toNumber(x.saldoCont))}
+                  </td>
+                  <td className={`px-4 py-2.5 text-right font-semibold ${x.saldoFin.isNegative() ? 'text-red-600' : 'text-emerald-700'}`}>
+                    {formatCurrency(toNumber(x.saldoFin))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-slate-200 bg-slate-100 font-bold">
+                <td className="px-4 py-2.5 text-slate-800" colSpan={2}>Total</td>
+                <td className="px-4 py-2.5 text-right text-slate-800">{formatCurrency(totalContResumo)}</td>
+                <td className="px-4 py-2.5 text-right text-slate-800">{formatCurrency(totalFinResumo)}</td>
+              </tr>
+              <tr className="bg-slate-800 text-white">
+                <td className="px-4 py-3 font-bold" colSpan={2}>Saldo Total Geral</td>
+                <td className="px-4 py-3 text-right text-base font-bold" colSpan={2}>{formatCurrency(totalGeralResumo)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </Card>
