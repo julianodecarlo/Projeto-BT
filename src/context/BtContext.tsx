@@ -23,10 +23,35 @@ export function useBt() {
   return ctx;
 }
 
+const BT_STORAGE_KEY = 'bt_current';
+
+const loadStoredBt = (): BtReport | null => {
+  try {
+    const raw = localStorage.getItem(BT_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as BtReport) : null;
+  } catch {
+    return null;
+  }
+};
+
+const storeBt = (bt: BtReport | null) => {
+  try {
+    if (bt) localStorage.setItem(BT_STORAGE_KEY, JSON.stringify(bt));
+    else localStorage.removeItem(BT_STORAGE_KEY);
+  } catch {
+    // localStorage indisponível — ignora
+  }
+};
+
 export function BtProvider({ children }: { children: ReactNode }) {
-  const [currentBt, setCurrentBt] = useState<BtReport | null>(null);
+  const [currentBt, setCurrentBtState] = useState<BtReport | null>(loadStoredBt);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const setCurrentBt = useCallback((bt: BtReport | null) => {
+    setCurrentBtState(bt);
+    storeBt(bt);
+  }, []);
 
   const fetchAccounts = useCallback(async () => {
     const { data, error } = await supabase

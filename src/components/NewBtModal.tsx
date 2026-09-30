@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Modal from './ui/Modal';
 import { Field, Input, Button } from './ui/Field';
 import { useBt } from '@/context/BtContext';
+import { supabase } from '@/lib/supabase';
 import { todayISO } from '@/lib/format';
 
 interface NewBtModalProps {
@@ -17,6 +18,9 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Normaliza removendo barras, pontos, hífens e zeros à esquerda: "001/2026" -> "12026"
+  const normalizeNumero = (n: string) => n.replace(/[/.\-\s]/g, '').replace(/^0+/, '');
+
   const handleSave = async () => {
     if (!numero.trim() || !data) {
       setError('Preencha número e data');
@@ -24,6 +28,19 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
     }
     setSaving(true);
     setError('');
+
+    const { data: existing } = await supabase
+      .from('bt_reports')
+      .select('numero');
+    const duplicado = (existing || []).some(
+      (b: { numero: string }) => normalizeNumero(b.numero) === normalizeNumero(numero.trim())
+    );
+    if (duplicado) {
+      setSaving(false);
+      setError(`Já existe um BT com o número ${numero.trim()}.`);
+      return;
+    }
+
     const bt = await createBt(numero.trim(), data);
     setSaving(false);
     if (bt) {
@@ -32,7 +49,7 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
       onClose();
       onCreated?.();
     } else {
-      setError('Erro ao criar BT. Verifique se o número já não existe.');
+      setError('Erro ao criar BT. Verifique sua conexão e tente novamente.');
     }
   };
 
