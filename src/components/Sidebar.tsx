@@ -1,4 +1,5 @@
-import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText } from 'lucide-react';
+import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText, Save, BadgeCheck, Lock } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 export type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
 
@@ -7,6 +8,9 @@ interface SidebarProps {
   onNavigate: (page: PageKey) => void;
   btNumero: string | null;
   btStatus: string | null;
+  btId: string | null;
+  onBtStatusChange: () => void;
+  onActionFeedback: (msg: string) => void;
 }
 
 const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
@@ -19,9 +23,30 @@ const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] 
   { key: 'relatorios', label: 'Relatórios e PDF', icon: FileText },
 ];
 
-export default function Sidebar({ current, onNavigate, btNumero, btStatus }: SidebarProps) {
+export default function Sidebar({ current, onNavigate, btNumero, btStatus, btId, onBtStatusChange, onActionFeedback }: SidebarProps) {
   const statusColor = btStatus === 'fechado' ? 'bg-emerald-500' : btStatus === 'validado' ? 'bg-amber-500' : 'bg-slate-400';
   const statusLabel = btStatus === 'fechado' ? 'Fechado' : btStatus === 'validado' ? 'Validado' : 'Rascunho';
+
+  const salvarBt = async () => {
+    if (!btId) return;
+    await supabase.from('bt_reports').update({ status: 'rascunho' }).eq('id', btId);
+    onBtStatusChange();
+    onActionFeedback('BT salvo (rascunho).');
+  };
+
+  const validarBt = async () => {
+    if (!btId) return;
+    await supabase.from('bt_reports').update({ status: 'validado' }).eq('id', btId);
+    onBtStatusChange();
+    onActionFeedback('BT validado.');
+  };
+
+  const fecharBt = async () => {
+    if (!btId) return;
+    await supabase.from('bt_reports').update({ status: 'fechado' }).eq('id', btId);
+    onBtStatusChange();
+    onActionFeedback('BT fechado e salvo.');
+  };
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col h-screen sticky top-0">
@@ -69,6 +94,36 @@ export default function Sidebar({ current, onNavigate, btNumero, btStatus }: Sid
           );
         })}
       </nav>
+
+      {btId && (
+        <div className="px-2 py-3 border-t border-slate-800 space-y-1.5">
+          <p className="px-3 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Ações do BT</p>
+          <button
+            onClick={salvarBt}
+            disabled={btStatus === 'fechado'}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Save className="w-4 h-4 text-slate-400" />
+            Salvar BT
+          </button>
+          <button
+            onClick={validarBt}
+            disabled={btStatus === 'fechado'}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-amber-400 hover:bg-slate-800 hover:text-amber-300 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <BadgeCheck className="w-4 h-4" />
+            Validar BT
+          </button>
+          <button
+            onClick={fecharBt}
+            disabled={btStatus === 'fechado'}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-emerald-400 hover:bg-slate-800 hover:text-emerald-300 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Lock className="w-4 h-4" />
+            Fechar BT (Finalizar e Salvar)
+          </button>
+        </div>
+      )}
 
       <div className="px-5 py-3 border-t border-slate-800">
         <p className="text-[10px] text-slate-500">UNESP - Campus Botucatu</p>

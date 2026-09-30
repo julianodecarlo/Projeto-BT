@@ -22,9 +22,15 @@ const pageTitles: Record<PageKey, { title: string; subtitle: string }> = {
 };
 
 function AppContent() {
-  const { currentBt } = useBt();
+  const { currentBt, refreshBt } = useBt();
   const [page, setPage] = useState<PageKey>('dashboard');
   const [showNewBt, setShowNewBt] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const handleActionFeedback = (msg: string) => {
+    setFeedback(msg);
+    window.setTimeout(() => setFeedback(null), 3000);
+  };
 
   const meta = pageTitles[page];
 
@@ -35,6 +41,9 @@ function AppContent() {
         onNavigate={setPage}
         btNumero={currentBt?.numero ?? null}
         btStatus={currentBt?.status ?? null}
+        btId={currentBt?.id ?? null}
+        onBtStatusChange={refreshBt}
+        onActionFeedback={handleActionFeedback}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar
@@ -44,7 +53,12 @@ function AppContent() {
           btData={currentBt?.data ?? null}
           onNewBt={() => setShowNewBt(true)}
         />
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto relative">
+          {feedback && (
+            <div className="absolute top-3 right-6 z-20 bg-emerald-600 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-lg">
+              {feedback}
+            </div>
+          )}
           {page === 'dashboard' && <Dashboard onNavigate={setPage} onNewBt={() => setShowNewBt(true)} />}
           {page === 'movimentacao' && <Movimentacao />}
           {page === 'convenios' && <Convenios />}

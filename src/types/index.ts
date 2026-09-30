@@ -130,6 +130,24 @@ export interface Reconciliation {
   created_at: string;
 }
 
+export interface PaymentPending {
+  id: string;
+  bt_report_id: string | null;
+  account_id: string;
+  valor: number;
+  data_lancamento: string;
+  descricao: string | null;
+  created_at: string;
+}
+
+export interface PendencyResolution {
+  id: string;
+  kind: 'cheque' | 'deposito' | 'pagamento';
+  ref_id: string;
+  bt_report_id: string;
+  created_at: string;
+}
+
 export interface Subalinea {
   id: string;
   codigo: string;
