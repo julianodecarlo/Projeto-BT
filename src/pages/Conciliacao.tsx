@@ -8,6 +8,55 @@ import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Conv
 
 type ResolutionKind = 'cheque' | 'deposito' | 'pagamento';
 
+interface MoneyInputProps {
+  value: number | null;
+  onValueChange: (value: number) => void;
+  className?: string;
+  placeholder?: string;
+}
+
+const formatDigits = (digits: string): string => {
+  if (!digits) return '';
+  const cents = parseInt(digits, 10);
+  const intPart = Math.floor(cents / 100).toString();
+  const decPart = (cents % 100).toString().padStart(2, '0');
+  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${intFormatted},${decPart}`;
+};
+
+function MoneyInput({ value, onValueChange, className, placeholder }: MoneyInputProps) {
+  const [display, setDisplay] = useState(() =>
+    value != null && value !== 0 ? formatDigits(Math.round(value * 100).toString()) : ''
+  );
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setDisplay(value != null && value !== 0 ? formatDigits(Math.round(value * 100).toString()) : '');
+    }
+  }, [value, focused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '') || '';
+    setDisplay(formatDigits(digits));
+    const cents = digits ? parseInt(digits, 10) : 0;
+    onValueChange(cents / 100);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={display}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={handleChange}
+      className={className}
+      placeholder={placeholder}
+    />
+  );
+}
+
 export default function Conciliacao() {
   const { currentBt, accounts } = useBt();
   const [cheques, setCheques] = useState<Cheque[]>([]);
@@ -121,8 +170,6 @@ export default function Conciliacao() {
   }, [openItems]);
 
   const getPendencias = (accId: string) => pendenciasPorConta.get(accId) ?? 0;
-  const getSaldoEsperado = (accId: string) =>
-    toDecimal(getAccountSaldoOrcamentario(accId)).plus(toDecimal(getPendencias(accId))).toNumber();
 
   // Cheques handlers
   const addCheque = async () => {
@@ -214,10 +261,8 @@ export default function Conciliacao() {
     const pendencias = getPendencias(accId);
     const rendimento = field === 'rendimento_acumulado' ? value : (existing?.rendimento_acumulado ?? 0);
     const saldoExtrato = field === 'saldo_extrato' ? value : (existing?.saldo_extrato ?? 0);
-    // Saldo Esperado = Saldo Orçamentário + Pendências (cheques + pagamentos - depósitos)
-    const saldoEsperado = toDecimal(saldoOrcamentario).plus(toDecimal(pendencias)).toNumber();
-    const saldoConciliado = saldoEsperado;
-    const divergente = Math.abs(saldoExtrato - saldoConciliado) > 0.01;
+    const saldoConciliado = toDecimal(saldoExtrato).plus(toDecimal(rendimento)).toNumber();
+    const divergente = Math.abs(toDecimal(saldoConciliado).minus(toDecimal(saldoOrcamentario)).minus(toDecimal(pendencias)).toNumber()) > 0.01;
 
     if (existing) {
       const { data, error } = await supabase
@@ -386,7 +431,7 @@ export default function Conciliacao() {
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-800">Conciliação por Conta</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Saldo Esperado = Saldo Orçamentário + Pendências (cheques + pagamentos - depósitos)</p>
+          <p className="text-xs text-slate-500 mt-0.5">Pendências = + Cheques + Pagamentos - Depósitos · Conciliado quando Extrato + Rendimentos = Orçamentário + Pendências</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -394,9 +439,10 @@ export default function Conciliacao() {
               <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider">
                 <th className="px-4 py-2 text-left font-semibold">Conta</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Orçamentário</th>
-                <th className="px-4 py-2 text-right font-semibold">Pendências</th>
-                <th className="px-4 py-2 text-right font-semibold">Saldo Esperado</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Extrato</th>
+                <th className="px-4 py-2 text-right font-semibold">Rendimentos Acum.</th>
+                <th className="px-4 py-2 text-right font-semibold">Pendências</th>
+                <th className="px-4 py-2 text-right font-semibold">Saldo Conciliado</th>
                 <th className="px-4 py-2 text-center font-semibold">Status</th>
               </tr>
             </thead>
@@ -405,10 +451,12 @@ export default function Conciliacao() {
                 const recon = getRecon(acc.id);
                 const saldoOrc = getAccountSaldoOrcamentario(acc.id);
                 const pend = getPendencias(acc.id);
-                const saldoEsperado = getSaldoEsperado(acc.id);
                 const saldoExtrato = recon?.saldo_extrato ?? null;
+                const rendimento = recon?.rendimento_acumulado ?? 0;
+                // Lado bancário (extrato + rendimentos) confrontado com o lado contábil (orçamentário + pendências)
+                const saldoConc = toDecimal(saldoExtrato ?? 0).plus(toDecimal(rendimento)).toNumber();
                 const extratoVazio = saldoExtrato === null || saldoExtrato === 0;
-                const divergente = !extratoVazio && Math.abs((saldoExtrato ?? 0) - saldoEsperado) > 0.01;
+                const divergente = !extratoVazio && Math.abs(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).minus(toDecimal(pend)).toNumber()) > 0.01;
                 return (
                   <tr key={acc.id} className="border-t border-slate-100">
                     <td className="px-4 py-2.5">
@@ -416,20 +464,26 @@ export default function Conciliacao() {
                       <p className="text-xs text-slate-400">{acc.codigo}</p>
                     </td>
                     <td className="px-4 py-2.5 text-right font-medium text-slate-600">{formatCurrency(saldoOrc)}</td>
-                    <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-blue-700' : pend > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
-                      {formatCurrency(pend)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{formatCurrency(saldoEsperado)}</td>
                     <td className="px-4 py-2.5 text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={saldoExtrato ?? ''}
-                        onChange={(e) => updateRecon(acc.id, 'saldo_extrato', toDecimal(e.target.value || 0).toNumber())}
+                      <MoneyInput
+                        value={saldoExtrato}
+                        onValueChange={(v) => updateRecon(acc.id, 'saldo_extrato', v)}
                         className="w-32 text-right py-1.5"
                         placeholder="0,00"
                       />
                     </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <MoneyInput
+                        value={recon?.rendimento_acumulado ?? 0}
+                        onValueChange={(v) => updateRecon(acc.id, 'rendimento_acumulado', v)}
+                        className="w-28 text-right py-1.5"
+                        placeholder="0,00"
+                      />
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-blue-700' : pend > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                      {formatCurrency(pend)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{formatCurrency(saldoConc)}</td>
                     <td className="px-4 py-2.5 text-center">
                       {extratoVazio ? (
                         <Badge color="slate">Pendente</Badge>
