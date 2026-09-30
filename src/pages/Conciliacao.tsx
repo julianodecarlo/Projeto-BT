@@ -51,7 +51,7 @@ function MoneyInput({ value, onValueChange, className, placeholder }: MoneyInput
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       onChange={handleChange}
-      className={className}
+      className={`text-right py-1.5 bg-blue-50/40 border border-blue-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition-all ${className || ''}`}
       placeholder={placeholder}
     />
   );
@@ -261,7 +261,7 @@ export default function Conciliacao() {
     const pendencias = getPendencias(accId);
     const rendimento = field === 'rendimento_acumulado' ? value : (existing?.rendimento_acumulado ?? 0);
     const saldoExtrato = field === 'saldo_extrato' ? value : (existing?.saldo_extrato ?? 0);
-    const saldoConciliado = toDecimal(saldoExtrato).plus(toDecimal(rendimento)).toNumber();
+    const saldoConciliado = toDecimal(saldoExtrato).minus(toDecimal(rendimento)).minus(toDecimal(pendencias)).toNumber();
     const divergente = Math.abs(toDecimal(saldoConciliado).minus(toDecimal(saldoOrcamentario)).minus(toDecimal(pendencias)).toNumber()) > 0.01;
 
     if (existing) {
@@ -431,7 +431,7 @@ export default function Conciliacao() {
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-800">Conciliação por Conta</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Pendências = + Cheques + Pagamentos - Depósitos · Conciliado quando Extrato + Rendimentos = Orçamentário + Pendências</p>
+          <p className="text-xs text-slate-500 mt-0.5">Conciliado quando Extrato − Rendimentos − Pendências = Saldo Orçamentário</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -453,10 +453,10 @@ export default function Conciliacao() {
                 const pend = getPendencias(acc.id);
                 const saldoExtrato = recon?.saldo_extrato ?? null;
                 const rendimento = recon?.rendimento_acumulado ?? 0;
-                // Lado bancário (extrato + rendimentos) confrontado com o lado contábil (orçamentário + pendências)
-                const saldoConc = toDecimal(saldoExtrato ?? 0).plus(toDecimal(rendimento)).toNumber();
+                // Lado bancário (extrato - rendimentos - pendências) confrontado com o orçamentário
+                const saldoConc = toDecimal(saldoExtrato ?? 0).minus(toDecimal(rendimento)).minus(toDecimal(pend)).toNumber();
                 const extratoVazio = saldoExtrato === null || saldoExtrato === 0;
-                const divergente = !extratoVazio && Math.abs(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).minus(toDecimal(pend)).toNumber()) > 0.01;
+                const divergente = !extratoVazio && Math.abs(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).toNumber()) > 0.01;
                 return (
                   <tr key={acc.id} className="border-t border-slate-100">
                     <td className="px-4 py-2.5">
@@ -468,7 +468,7 @@ export default function Conciliacao() {
                       <MoneyInput
                         value={saldoExtrato}
                         onValueChange={(v) => updateRecon(acc.id, 'saldo_extrato', v)}
-                        className="w-32 text-right py-1.5"
+                        className="w-32"
                         placeholder="0,00"
                       />
                     </td>
@@ -476,7 +476,7 @@ export default function Conciliacao() {
                       <MoneyInput
                         value={recon?.rendimento_acumulado ?? 0}
                         onValueChange={(v) => updateRecon(acc.id, 'rendimento_acumulado', v)}
-                        className="w-28 text-right py-1.5"
+                        className="w-28"
                         placeholder="0,00"
                       />
                     </td>
