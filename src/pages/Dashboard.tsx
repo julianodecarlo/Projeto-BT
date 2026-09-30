@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, Wallet, FileText, ArrowRight, Calendar, Settings, Pencil } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, FileText, ArrowRight, Calendar, Settings, Pencil, List, Package } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Badge, Button } from '@/components/ui/Field';
@@ -7,6 +7,10 @@ import { formatCurrency, formatDate, sumDecimal, toNumber } from '@/lib/format';
 import type { BtReport, Transaction } from '@/types';
 import type { PageKey } from '@/components/Sidebar';
 import AccountModal from '@/components/AccountModal';
+import BtOptionsMenu from '@/components/BtOptionsMenu';
+import AllBtsModal from '@/components/AllBtsModal';
+import { BackupRestoreSection } from '@/components/BackupRestore';
+import Modal from '@/components/ui/Modal';
 
 interface DashboardProps {
   onNavigate: (page: PageKey) => void;
@@ -18,6 +22,9 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
   const [recentBts, setRecentBts] = useState<BtReport[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showAllBts, setShowAllBts] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -36,7 +43,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
         if (txs) setTransactions(txs as Transaction[]);
       }
     })();
-  }, [currentBt]);
+  }, [currentBt, refreshKey]);
 
   const handleOpenBt = async (bt: BtReport) => {
     setCurrentBt(bt);
@@ -80,7 +87,9 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
               {currentBt ? `BT ${currentBt.numero}` : 'Nenhum BT ativo'}
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              {currentBt ? formatDate(currentBt.data) : 'Crie um novo boletim para começar'}
+              {currentBt
+                ? `${formatDate(currentBt.data)}${currentBt.data_fim ? ` até ${formatDate(currentBt.data_fim)}` : ''}`
+                : 'Crie um novo boletim para começar'}
             </p>
           </div>
           {currentBt && (
@@ -89,9 +98,12 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
             </Badge>
           )}
         </div>
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-2 flex-wrap">
           <Button variant="secondary" onClick={onNewBt} className="bg-white/10 border-white/20 text-white hover:bg-white/20">
             <FileText className="w-4 h-4" /> Novo BT
+          </Button>
+          <Button variant="secondary" onClick={() => setShowAllBts(true)} className="bg-white/10 border-white/20 text-white hover:bg-white/20">
+            <List className="w-4 h-4" /> Ver Todos
           </Button>
           <Button variant="ghost" onClick={() => onNavigate('movimentacao')} className="text-white hover:bg-white/10">
             Nova Movimentação <ArrowRight className="w-4 h-4" />
@@ -145,7 +157,17 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
         </Card>
 
         <Card className="p-5">
-          <h3 className="text-sm font-bold text-slate-800 mb-4">BTs Recentes</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-800">BTs Recentes</h3>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setShowAllBts(true)}>
+                <List className="w-3.5 h-3.5" /> Ver Todos
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setShowSettings(true)}>
+                <Package className="w-3.5 h-3.5" /> Backup
+              </Button>
+            </div>
+          </div>
           {recentBts.length === 0 ? (
             <p className="text-sm text-slate-400 py-4 text-center">Nenhum BT criado ainda</p>
           ) : (
@@ -155,11 +177,15 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-slate-400" />
                     <div>
-                      <p className="text-sm font-medium text-slate-700">BT {bt.numero}</p>
-                      <p className="text-xs text-slate-400">{formatDate(bt.data)}</p>
+                      <button onClick={() => handleOpenBt(bt)} className="text-sm font-medium text-slate-700 hover:text-blue-600">
+                        BT {bt.numero}
+                      </button>
+                      <p className="text-xs text-slate-400">
+                        {formatDate(bt.data)}{bt.data_fim ? ` até ${formatDate(bt.data_fim)}` : ''}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'validado' ? 'amber' : 'slate'}>
                       {bt.status === 'fechado' ? 'Fechado' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
                     </Badge>
@@ -170,6 +196,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
+                    <BtOptionsMenu bt={bt} onChanged={() => setRefreshKey((k) => k + 1)} />
                   </div>
                 </div>
               ))}
@@ -179,6 +206,10 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
       </div>
 
       <AccountModal open={showAccountModal} onClose={() => setShowAccountModal(false)} />
+      <AllBtsModal open={showAllBts} onClose={() => setShowAllBts(false)} />
+      <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Backup e Restauração" maxWidth="max-w-lg">
+        <BackupRestoreSection />
+      </Modal>
     </div>
   );
 }

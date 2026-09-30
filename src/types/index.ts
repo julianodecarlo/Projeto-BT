@@ -23,6 +23,7 @@ export interface BtReport {
   id: string;
   numero: string;
   data: string;
+  data_fim: string | null;
   status: BtStatus;
   instituicao: string;
   unidade: string;

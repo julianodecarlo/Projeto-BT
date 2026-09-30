@@ -15,6 +15,7 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
   const { createBt } = useBt();
   const [numero, setNumero] = useState('');
   const [data, setData] = useState(todayISO());
+  const [dataFim, setDataFim] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -23,7 +24,11 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
 
   const handleSave = async () => {
     if (!numero.trim() || !data) {
-      setError('Preencha número e data');
+      setError('Preencha número e data de início');
+      return;
+    }
+    if (dataFim && dataFim < data) {
+      setError('A Data de Fim não pode ser anterior à Data de Início');
       return;
     }
     setSaving(true);
@@ -41,11 +46,12 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
       return;
     }
 
-    const bt = await createBt(numero.trim(), data);
+    const bt = await createBt(numero.trim(), data, dataFim || null);
     setSaving(false);
     if (bt) {
       setNumero('');
       setData(todayISO());
+      setDataFim('');
       onClose();
       onCreated?.();
     } else {
@@ -64,9 +70,15 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
             autoFocus
           />
         </Field>
-        <Field label="Data da Movimentação">
+        <Field label="Data de Início">
           <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
         </Field>
+        <Field label="Data de Fim (opcional)">
+          <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} min={data} />
+        </Field>
+        <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+          Caso a Data de Fim não seja preenchida, o sistema considerará apenas a Data de Início (BT de 1 dia).
+        </p>
         {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>

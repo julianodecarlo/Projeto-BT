@@ -10,7 +10,10 @@ interface BtContextValue {
   loading: boolean;
   setCurrentBt: (bt: BtReport | null) => void;
   refreshAccounts: () => Promise<void>;
-  createBt: (numero: string, data: string) => Promise<BtReport | null>;
+  createBt: (numero: string, data: string, dataFim?: string | null) => Promise<BtReport | null>;
+  updateBt: (id: string, fields: { numero: string; data: string; data_fim: string | null }) => Promise<boolean>;
+  reopenBt: (id: string) => Promise<boolean>;
+  deleteBt: (id: string) => Promise<boolean>;
   refreshBt: () => Promise<void>;
   cascadeRecalculate: (fromBtId: string) => Promise<void>;
 }
@@ -75,13 +78,14 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (data) setCurrentBt(data as BtReport);
   }, [currentBt]);
 
-  const createBt = useCallback(async (numero: string, data: string): Promise<BtReport | null> => {
+  const createBt = useCallback(async (numero: string, data: string, dataFim?: string | null): Promise<BtReport | null> => {
     const { data: btData, error } = await supabase
       .from('bt_reports')
       .insert([
         {
           numero,
           data,
+          data_fim: dataFim || null,
           status: 'rascunho',
           instituicao: 'UNIVERSIDADE ESTADUAL PAULISTA - CAMPUS DE BOTUCATU',
           unidade: 'INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU - RECEITA PRÓPRIA',
@@ -151,6 +155,54 @@ export function BtProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateBt = useCallback(async (id: string, fields: { numero: string; data: string; data_fim: string | null }): Promise<boolean> => {
+    const { error } = await supabase.from('bt_reports').update(fields).eq('id', id);
+    if (error) {
+      console.error('Error updating BT:', error.message || error);
+      return false;
+    }
+    await cascadeRecalculate(id);
+    if (currentBt?.id === id) {
+      setCurrentBt({ ...currentBt, ...fields });
+    }
+    return true;
+  }, [cascadeRecalculate, currentBt]);
+
+  const reopenBt = useCallback(async (id: string): Promise<boolean> => {
+    const { error } = await supabase.from('bt_reports').update({ status: 'rascunho' }).eq('id', id);
+    if (error) {
+      console.error('Error reopening BT:', error.message || error);
+      return false;
+    }
+    if (currentBt?.id === id) {
+      setCurrentBt({ ...currentBt, status: 'rascunho' });
+    }
+    return true;
+  }, [currentBt]);
+
+  const deleteBt = useCallback(async (id: string): Promise<boolean> => {
+    const { data: bt } = await supabase.from('bt_reports').select('data').eq('id', id).maybeSingle();
+    const { error } = await supabase.from('bt_reports').delete().eq('id', id);
+    if (error) {
+      console.error('Error deleting BT:', error.message || error);
+      return false;
+    }
+    if (bt) {
+      const { data: remaining } = await supabase
+        .from('bt_reports')
+        .select('id')
+        .gte('data', bt.data)
+        .order('data', { ascending: true });
+      for (const r of remaining || []) {
+        await cascadeRecalculate(r.id);
+      }
+    }
+    if (currentBt?.id === id) {
+      setCurrentBt(null);
+    }
+    return true;
+  }, [cascadeRecalculate, currentBt]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -172,7 +224,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, [fetchAccounts]);
 
   return (
-    <BtContext.Provider value={{ currentBt, accounts, loading, setCurrentBt, refreshAccounts, createBt, refreshBt, cascadeRecalculate }}>
+    <BtContext.Provider value={{ currentBt, accounts, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate }}>
       {children}
     </BtContext.Provider>
   );
