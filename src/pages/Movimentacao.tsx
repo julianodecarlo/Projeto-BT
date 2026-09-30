@@ -16,7 +16,6 @@ interface RowInput {
   vigente: string;
   restos_pagar: string;
   diversos_credores: string;
-  cheques: string;
 }
 
 export default function Movimentacao() {
@@ -42,18 +41,14 @@ export default function Movimentacao() {
   const buildInputState = (txs: Transaction[]) => {
     const state: Record<string, RowInput> = {};
     for (const acc of accounts) {
-      state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
+      state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
     }
     for (const tx of txs) {
       if (tx.descricao === 'Saldo Anterior') continue;
-      if (!state[tx.account_id]) state[tx.account_id] = { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
-      if (tx.descricao === 'Cheques') {
-        state[tx.account_id].cheques = String(tx.valor || '');
-      } else {
-        const key = tx.tipo_orcamento || 'vigente';
-        if (key in state[tx.account_id]) {
-          state[tx.account_id][key as keyof RowInput] = String(tx.valor || '');
-        }
+      if (!state[tx.account_id]) state[tx.account_id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
+      const key = tx.tipo_orcamento || 'vigente';
+      if (key in state[tx.account_id]) {
+        state[tx.account_id][key as keyof RowInput] = String(tx.valor || '');
       }
     }
     setInputs(state);
@@ -67,7 +62,7 @@ export default function Movimentacao() {
     if (accounts.length > 0 && transactions.length === 0) {
       const state: Record<string, RowInput> = {};
       for (const acc of accounts) {
-        state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
+        state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
       }
       setInputs(state);
     }
@@ -90,7 +85,6 @@ export default function Movimentacao() {
         row.vigente || 0,
         row.restos_pagar || 0,
         row.diversos_credores || 0,
-        row.cheques || 0,
       ])
     );
   };
@@ -132,7 +126,6 @@ export default function Movimentacao() {
         { field: 'vigente', tipo: 'vigente', desc: 'Orçamento Vigente' },
         { field: 'restos_pagar', tipo: 'restos_pagar', desc: 'Restos a Pagar' },
         { field: 'diversos_credores', tipo: 'diversos_credores', desc: 'Diversos Credores' },
-        { field: 'cheques', tipo: null, desc: 'Cheques' },
       ];
 
       for (const entry of entries) {
@@ -167,6 +160,19 @@ export default function Movimentacao() {
   };
 
   const totalGeral = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSubtotal(acc.id), 0);
+  const totaisPorColuna = accounts.filter(a => a.ativo).reduce(
+    (acc, a) => {
+      const row = inputs[a.id];
+      if (!row) return acc;
+      return {
+        vigente: acc.vigente + toDecimal(row.vigente || 0).toNumber(),
+        restos_pagar: acc.restos_pagar + toDecimal(row.restos_pagar || 0).toNumber(),
+        diversos_credores: acc.diversos_credores + toDecimal(row.diversos_credores || 0).toNumber(),
+      };
+    },
+    { vigente: 0, restos_pagar: 0, diversos_credores: 0 }
+  );
+  const totalSaldoFinal = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSaldoFinal(acc.id), 0);
 
   if (!currentBt) {
     return (
@@ -184,7 +190,7 @@ export default function Movimentacao() {
       {/* Summary bar */}
       <div className="grid grid-cols-3 gap-3">
         <Card className="p-3">
-          <p className="text-xs text-slate-500">Total Geral de Saídas</p>
+          <p className="text-xs text-slate-500">Total de Pagamentos no Período</p>
           <p className="text-base font-bold text-amber-700">{formatCurrency(totalGeral)}</p>
         </Card>
         <Card className="p-3">
@@ -224,14 +230,13 @@ export default function Movimentacao() {
                 <th className="px-4 py-2.5 text-right font-semibold">Orçamento Vigente</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Restos a Pagar</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Diversos Credores</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Cheques nº</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Sub-Total</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Saldo Final</th>
               </tr>
             </thead>
             <tbody>
               {activeAccounts.map(acc => {
-                const row = inputs[acc.id] || { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
+                const row = inputs[acc.id] || { vigente: '', restos_pagar: '', diversos_credores: '' };
                 const subtotal = getAccountSubtotal(acc.id);
                 const saldoFinal = getAccountSaldoFinal(acc.id);
                 const saldoAnterior = getAccountSaldoAnterior(acc.id);
@@ -241,7 +246,7 @@ export default function Movimentacao() {
                       <p className="text-sm font-medium text-slate-700">{acc.nome}</p>
                       <p className="text-xs text-slate-400">{acc.codigo} · Saldo Ant: {formatCurrency(saldoAnterior)}</p>
                     </td>
-                    {(['vigente', 'restos_pagar', 'diversos_credores', 'cheques'] as const).map((field) => {
+                    {(['vigente', 'restos_pagar', 'diversos_credores'] as const).map((field) => {
                       const refKey = `${acc.id}-${field}`;
                       return (
                         <td key={field} className="px-2 py-2 text-right">
@@ -283,9 +288,11 @@ export default function Movimentacao() {
             <tfoot>
               <tr className="border-t-2 border-slate-200 bg-slate-100 font-bold">
                 <td className="px-4 py-3 text-slate-800">TOTAL GERAL</td>
-                <td colSpan={4}></td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.vigente)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.restos_pagar)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.diversos_credores)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalGeral)}</td>
-                <td></td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalSaldoFinal)}</td>
               </tr>
             </tfoot>
           </table>
