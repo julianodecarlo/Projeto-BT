@@ -110,6 +110,20 @@ export default function Conciliacao() {
     }
   };
 
+  // Pendências por conta: (+ cheques a compensar + pagamentos pendentes - depósitos pendentes)
+  const pendenciasPorConta = useMemo(() => {
+    const map = new Map<string, number>();
+    const add = (accId: string, v: number) => map.set(accId, (map.get(accId) || 0) + v);
+    for (const c of openItems.cheques) add(c.account_id, c.valor);
+    for (const p of openItems.payments) add(p.account_id, p.valor);
+    for (const d of openItems.deposits) add(d.account_id, -d.valor);
+    return map;
+  }, [openItems]);
+
+  const getPendencias = (accId: string) => pendenciasPorConta.get(accId) ?? 0;
+  const getSaldoEsperado = (accId: string) =>
+    toDecimal(getAccountSaldoOrcamentario(accId)).plus(toDecimal(getPendencias(accId))).toNumber();
+
   // Cheques handlers
   const addCheque = async () => {
     if (!currentBt || !chequeAccountId || !chequeNumero.trim() || !chequeValor || !chequeBenef.trim()) return;
@@ -197,10 +211,13 @@ export default function Conciliacao() {
     if (!currentBt) return;
     const existing = getRecon(accId);
     const saldoOrcamentario = getAccountSaldoOrcamentario(accId);
+    const pendencias = getPendencias(accId);
     const rendimento = field === 'rendimento_acumulado' ? value : (existing?.rendimento_acumulado ?? 0);
     const saldoExtrato = field === 'saldo_extrato' ? value : (existing?.saldo_extrato ?? 0);
-    const saldoConciliado = toDecimal(saldoExtrato).plus(toDecimal(rendimento)).toNumber();
-    const divergente = Math.abs(saldoConciliado - saldoOrcamentario) > 0.01;
+    // Saldo Esperado = Saldo Orçamentário + Pendências (cheques + pagamentos - depósitos)
+    const saldoEsperado = toDecimal(saldoOrcamentario).plus(toDecimal(pendencias)).toNumber();
+    const saldoConciliado = saldoEsperado;
+    const divergente = Math.abs(saldoExtrato - saldoConciliado) > 0.01;
 
     if (existing) {
       const { data, error } = await supabase
@@ -287,8 +304,8 @@ export default function Conciliacao() {
           {g.rows.map(cq => (
             <tr key={cq.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
               <td className="px-3 py-2">
-                <p className="font-medium text-slate-700">Cheque #{cq.numero}</p>
-                <p className="text-[10px] text-slate-400">{cq.beneficiario} · {formatDate(cq.data_emissao)} · emitido em {btNumeroById(cq.bt_report_id)}</p>
+                <p className="font-medium text-slate-700">Cheque nº {cq.numero} - {cq.beneficiario}</p>
+                <p className="text-[10px] text-slate-400">Lançamento: {formatDate(cq.data_emissao)} · emitido em {btNumeroById(cq.bt_report_id)}</p>
               </td>
               <td className="px-3 py-2 text-right font-semibold text-slate-700">{formatCurrency(cq.valor)}</td>
               <td className="px-2 py-2">
@@ -369,7 +386,7 @@ export default function Conciliacao() {
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-800">Conciliação por Conta</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Informe o saldo do extrato bancário e os rendimentos acumulados</p>
+          <p className="text-xs text-slate-500 mt-0.5">Saldo Esperado = Saldo Orçamentário + Pendências (cheques + pagamentos - depósitos)</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -377,9 +394,9 @@ export default function Conciliacao() {
               <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider">
                 <th className="px-4 py-2 text-left font-semibold">Conta</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Orçamentário</th>
+                <th className="px-4 py-2 text-right font-semibold">Pendências</th>
+                <th className="px-4 py-2 text-right font-semibold">Saldo Esperado</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Extrato</th>
-                <th className="px-4 py-2 text-right font-semibold">Rendimentos Acum.</th>
-                <th className="px-4 py-2 text-right font-semibold">Saldo Conciliado</th>
                 <th className="px-4 py-2 text-center font-semibold">Status</th>
               </tr>
             </thead>
@@ -387,10 +404,11 @@ export default function Conciliacao() {
               {activeAccounts.map(acc => {
                 const recon = getRecon(acc.id);
                 const saldoOrc = getAccountSaldoOrcamentario(acc.id);
-                const saldoExtrato = recon?.saldo_extrato ?? 0;
-                const rendimento = recon?.rendimento_acumulado ?? 0;
-                const saldoConc = recon?.saldo_conciliado ?? 0;
-                const divergente = recon?.divergente ?? false;
+                const pend = getPendencias(acc.id);
+                const saldoEsperado = getSaldoEsperado(acc.id);
+                const saldoExtrato = recon?.saldo_extrato ?? null;
+                const extratoVazio = saldoExtrato === null || saldoExtrato === 0;
+                const divergente = !extratoVazio && Math.abs((saldoExtrato ?? 0) - saldoEsperado) > 0.01;
                 return (
                   <tr key={acc.id} className="border-t border-slate-100">
                     <td className="px-4 py-2.5">
@@ -398,29 +416,22 @@ export default function Conciliacao() {
                       <p className="text-xs text-slate-400">{acc.codigo}</p>
                     </td>
                     <td className="px-4 py-2.5 text-right font-medium text-slate-600">{formatCurrency(saldoOrc)}</td>
+                    <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-blue-700' : pend > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                      {formatCurrency(pend)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{formatCurrency(saldoEsperado)}</td>
                     <td className="px-4 py-2.5 text-right">
                       <Input
                         type="number"
                         step="0.01"
-                        value={saldoExtrato || ''}
+                        value={saldoExtrato ?? ''}
                         onChange={(e) => updateRecon(acc.id, 'saldo_extrato', toDecimal(e.target.value || 0).toNumber())}
                         className="w-32 text-right py-1.5"
                         placeholder="0,00"
                       />
                     </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={rendimento || ''}
-                        onChange={(e) => updateRecon(acc.id, 'rendimento_acumulado', toDecimal(e.target.value || 0).toNumber())}
-                        className="w-28 text-right py-1.5"
-                        placeholder="0,00"
-                      />
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-semibold text-slate-700">{formatCurrency(saldoConc)}</td>
                     <td className="px-4 py-2.5 text-center">
-                      {saldoExtrato === 0 && rendimento === 0 ? (
+                      {extratoVazio ? (
                         <Badge color="slate">Pendente</Badge>
                       ) : divergente ? (
                         <Badge color="red">Divergente</Badge>
@@ -436,11 +447,10 @@ export default function Conciliacao() {
         </div>
       </Card>
 
-      {/* Pendências: cheques, depósitos e pagamentos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Cheques */}
-        <Card className="overflow-hidden">
-          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+      {/* Pendências: linha 1 = cheques (largura total) · linha 2 = depósitos + pagamentos lado a lado */}
+      {/* Cheques (largura total) */}
+      <Card className="overflow-hidden">
+        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-800">Cheques a Compensar</h3>
               <p className="text-xs text-slate-500 mt-0.5">Histórico mantido entre BTs · agrupados por conta corrente</p>
@@ -480,8 +490,10 @@ export default function Conciliacao() {
           </div>
         </Card>
 
-        {/* Depósitos */}
-        <Card className="overflow-hidden">
+      {/* Linha 2: depósitos (esquerda) + pagamentos (direita) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      {/* Depósitos */}
+      <Card className="overflow-hidden">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-800">Depósitos Pendentes</h3>
@@ -547,8 +559,7 @@ export default function Conciliacao() {
               ))
             )}
           </div>
-        </Card>
-      </div>
+      </Card>
 
       {/* Pagamentos Pendentes */}
       <Card className="overflow-hidden">
@@ -623,6 +634,7 @@ export default function Conciliacao() {
           )}
         </div>
       </Card>
+      </div>
 
       {/* Pendências resolvidas no BT atual */}
       {resolutions.filter(r => r.bt_report_id === currentBt.id).length > 0 && (
