@@ -7,14 +7,16 @@ import Dashboard from '@/pages/Dashboard';
 import Movimentacao from '@/pages/Movimentacao';
 import Conciliacao from '@/pages/Conciliacao';
 import Convenios from '@/pages/Convenios';
+import Receita from '@/pages/Receita';
 import Fechamento from '@/pages/Fechamento';
 import Relatorios from '@/pages/Relatorios';
 
 const pageTitles: Record<PageKey, { title: string; subtitle: string }> = {
   dashboard: { title: 'Visão Geral', subtitle: 'Painel de controle do Boletim de Tesouraria' },
-  movimentacao: { title: 'Nova Movimentação', subtitle: 'Registro de pagamentos e recebimentos por conta' },
+  receita: { title: 'Controle da Receita', subtitle: 'Subalíneas e Receitas Próprias (contábil e financeira)' },
+  movimentacao: { title: 'Movimentações', subtitle: 'Registro de pagamentos e recebimentos por conta' },
+  convenios: { title: 'Controle de Convênios', subtitle: 'Fontes orçamentárias 5/45/4/44 e vínculo financeiro' },
   conciliacao: { title: 'Conciliação Bancária', subtitle: 'Confronto entre saldo orçamentário e extrato bancário' },
-  convenios: { title: 'Convênios e Receitas', subtitle: 'Gestão de convênios e receitas próprias (contábil e financeira)' },
   fechamento: { title: 'Fechamento Diário', subtitle: 'Validação e encerramento do BT' },
   relatorios: { title: 'Relatórios e PDF', subtitle: 'Visualização e exportação de Boletins de Tesouraria' },
 };
@@ -45,8 +47,9 @@ function AppContent() {
         <main className="flex-1 overflow-y-auto">
           {page === 'dashboard' && <Dashboard onNavigate={setPage} onNewBt={() => setShowNewBt(true)} />}
           {page === 'movimentacao' && <Movimentacao />}
-          {page === 'conciliacao' && <Conciliacao />}
           {page === 'convenios' && <Convenios />}
+          {page === 'receita' && <Receita />}
+          {page === 'conciliacao' && <Conciliacao />}
           {page === 'fechamento' && <Fechamento />}
           {page === 'relatorios' && <Relatorios onNavigate={setPage} />}
         </main>

@@ -1,6 +1,6 @@
-import { LayoutDashboard, FilePlus, Scale, Handshake, CheckCircle, FileText } from 'lucide-react';
+import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText } from 'lucide-react';
 
-export type PageKey = 'dashboard' | 'movimentacao' | 'conciliacao' | 'convenios' | 'fechamento' | 'relatorios';
+export type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
 
 interface SidebarProps {
   current: PageKey;
@@ -11,9 +11,10 @@ interface SidebarProps {
 
 const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'dashboard', label: 'Visão Geral', icon: LayoutDashboard },
-  { key: 'movimentacao', label: 'Nova Movimentação', icon: FilePlus },
+  { key: 'receita', label: 'Controle da Receita', icon: Wallet },
+  { key: 'movimentacao', label: 'Movimentações', icon: FilePlus },
+  { key: 'convenios', label: 'Controle de Convênios', icon: Handshake },
   { key: 'conciliacao', label: 'Conciliação Bancária', icon: Scale },
-  { key: 'convenios', label: 'Convênios e Receitas', icon: Handshake },
   { key: 'fechamento', label: 'Fechamento Diário', icon: CheckCircle },
   { key: 'relatorios', label: 'Relatórios e PDF', icon: FileText },
 ];

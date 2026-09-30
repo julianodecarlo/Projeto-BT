@@ -1,5 +1,6 @@
 export type BtStatus = 'rascunho' | 'validado' | 'fechado';
 
+
 export type AccountCategory =
   | 'movimento'
   | 'receita'
@@ -47,6 +48,11 @@ export interface Convenio {
   id: string;
   nome: string;
   account_id: string | null;
+  fonte_5: number;
+  fonte_45: number;
+  fonte_4: number;
+  fonte_44: number;
+  finance_account_id: string | null;
   created_at: string;
 }
 

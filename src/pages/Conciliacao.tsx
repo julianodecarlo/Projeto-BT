@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Trash2, CheckCircle, AlertTriangle, FileText } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, AlertTriangle, FileText, Handshake } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
-import type { Cheque, DepositPending, Reconciliation, Transaction, Account } from '@/types';
+import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio } from '@/types';
 
 export default function Conciliacao() {
   const { currentBt, accounts } = useBt();
@@ -12,6 +12,7 @@ export default function Conciliacao() {
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
   const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [convenios, setConvenios] = useState<Convenio[]>([]);
 
   // Form state - cheques
   const [showChequeForm, setShowChequeForm] = useState(false);
@@ -28,16 +29,18 @@ export default function Conciliacao() {
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [chequesRes, depositsRes, reconRes, txRes] = await Promise.all([
+    const [chequesRes, depositsRes, reconRes, txRes, convRes] = await Promise.all([
       supabase.from('cheques').select('*').eq('bt_report_id', currentBt.id).order('data_emissao', { ascending: true }),
       supabase.from('deposits_pending').select('*').eq('bt_report_id', currentBt.id).order('created_at', { ascending: true }),
       supabase.from('reconciliation').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id).order('ordem', { ascending: true }),
+      supabase.from('convenios').select('*'),
     ]);
     if (chequesRes.data) setCheques(chequesRes.data as Cheque[]);
     if (depositsRes.data) setDeposits(depositsRes.data as DepositPending[]);
     if (reconRes.data) setReconciliations(reconRes.data as Reconciliation[]);
     if (txRes.data) setTransactions(txRes.data as Transaction[]);
+    if (convRes.data) setConvenios(convRes.data as Convenio[]);
   }, [currentBt]);
 
   useEffect(() => {
@@ -180,6 +183,12 @@ export default function Conciliacao() {
   const totalChequesCompensar = toNumber(sumDecimal(cheques.filter(c => c.status === 'a_compensar').map(c => c.valor)));
   const totalDeposits = toNumber(sumDecimal(deposits.map(d => d.valor)));
   const divergentCount = reconciliations.filter(r => r.divergente).length;
+  const totalConveniosPorConta = new Map<string, number>();
+  for (const c of convenios) {
+    if (!c.finance_account_id) continue;
+    const t = toDecimal(c.fonte_5 || 0).plus(toDecimal(c.fonte_45 || 0)).plus(toDecimal(c.fonte_4 || 0)).plus(toDecimal(c.fonte_44 || 0)).toNumber();
+    totalConveniosPorConta.set(c.finance_account_id, (totalConveniosPorConta.get(c.finance_account_id) || 0) + t);
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -219,6 +228,24 @@ export default function Conciliacao() {
           </div>
         </Card>
       </div>
+
+      {/* Espelho dos Convênios por conta financeira */}
+      {totalConveniosPorConta.size > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Handshake className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800">Total Geral dos Convênios (espelho para validação)</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {Array.from(totalConveniosPorConta.entries()).map(([accId, total]) => (
+              <div key={accId} className="flex items-center justify-between bg-blue-50/50 border border-blue-100 rounded-lg px-3 py-2">
+                <span className="text-xs font-medium text-slate-600">{accounts.find(a => a.id === accId)?.nome || 'Conta removida'}</span>
+                <span className="text-sm font-bold text-blue-700">{formatCurrency(total)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Reconciliation table per account */}
       <Card className="overflow-hidden">
