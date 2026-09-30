@@ -96,8 +96,8 @@ export default function Receita() {
   };
 
   const addRevenue = async () => {
-    if (!currentBt || !revSubalinea || !revSaldoAnt || !revArrecadacao) return;
-    const saldoAnt = toDecimal(revSaldoAnt);
+    if (!currentBt || !revSubalinea || !revArrecadacao) return;
+    const saldoAnt = toDecimal(revSaldoAnt || 0);
     const arrec = toDecimal(revArrecadacao);
     const saldoFinCont = saldoAnt.plus(arrec);
     const caixa = revTipo === 'financeira' ? toDecimal(revCaixa || 0) : new Decimal(0);
@@ -105,19 +105,41 @@ export default function Receita() {
     const saldoFinFisc = revTipo === 'financeira' ? caixa.plus(bancos) : new Decimal(0);
     const maxOrdem = revenues.length > 0 ? Math.max(...revenues.map(r => r.ordem)) : 0;
 
+    // Linha de abertura criada pela transposição: atualiza em vez de duplicar
+    const seedRow = revenues.find(r => r.subalinea === revSubalinea && r.tipo === revTipo && r.ordem === 0);
+
+    const payload = {
+      saldo_anterior: saldoAnt.toNumber(),
+      arrecadacao: arrec.toNumber(),
+      saldo_final_contabil: saldoFinCont.toNumber(),
+      caixa: caixa.toNumber(),
+      bancos: bancos.toNumber(),
+      saldo_final_financeiro: saldoFinFisc.toNumber(),
+      account_id: revTipo === 'financeira' ? (revAccountId || null) : null,
+    };
+
+    if (seedRow) {
+      const { data, error } = await supabase
+        .from('revenue_own')
+        .update(payload)
+        .eq('id', seedRow.id)
+        .select()
+        .single();
+      if (!error && data) {
+        setRevenues(revenues.map(r => (r.id === seedRow.id ? (data as RevenueOwn) : r)));
+        setRevSaldoAnt(''); setRevArrecadacao(''); setRevCaixa(''); setRevBancos('');
+        setShowRevForm(false);
+      }
+      return;
+    }
+
     const { data, error } = await supabase
       .from('revenue_own')
       .insert({
         bt_report_id: currentBt.id,
         subalinea: revSubalinea,
         tipo: revTipo,
-        saldo_anterior: saldoAnt.toNumber(),
-        arrecadacao: arrec.toNumber(),
-        saldo_final_contabil: saldoFinCont.toNumber(),
-        caixa: caixa.toNumber(),
-        bancos: bancos.toNumber(),
-        saldo_final_financeiro: saldoFinFisc.toNumber(),
-        account_id: revTipo === 'financeira' ? (revAccountId || null) : null,
+        ...payload,
         ordem: maxOrdem + 1,
       })
       .select()
@@ -129,6 +151,14 @@ export default function Receita() {
       setShowRevForm(false);
     }
   };
+
+  // Pré-preenche o saldo anterior com o valor transposto na criação do BT
+  useEffect(() => {
+    const seedRow = revenues.find(r => r.subalinea === revSubalinea && r.tipo === revTipo && r.ordem === 0);
+    if (seedRow) {
+      setRevSaldoAnt(String(revTipo === 'contabil' ? seedRow.saldo_anterior : seedRow.saldo_final_financeiro));
+    }
+  }, [revSubalinea, revTipo, revenues]);
 
   const deleteRevenue = async (id: string) => {
     await supabase.from('revenue_own').delete().eq('id', id);

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, type ReactNode, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
+import { transposeSaldos } from '@/lib/transpose';
 import type { BtReport, Account } from '@/types';
 import Decimal from 'decimal.js';
 
@@ -101,6 +102,11 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (!btData || btData.length === 0) return null;
 
     const created = btData[0] as BtReport;
+    try {
+      await transposeSaldos(created);
+    } catch (err) {
+      console.error('Erro na transposição de saldos:', err);
+    }
     setCurrentBt(created);
     return created;
   }, []);

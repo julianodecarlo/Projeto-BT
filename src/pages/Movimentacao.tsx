@@ -45,6 +45,7 @@ export default function Movimentacao() {
       state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
     }
     for (const tx of txs) {
+      if (tx.descricao === 'Saldo Anterior') continue;
       if (!state[tx.account_id]) state[tx.account_id] = { vigente: '', restos_pagar: '', diversos_credores: '', cheques: '' };
       if (tx.descricao === 'Cheques') {
         state[tx.account_id].cheques = String(tx.valor || '');
@@ -75,9 +76,9 @@ export default function Movimentacao() {
   const getAccountSaldoAnterior = (accId: string): number => {
     const acc = accounts.find(a => a.id === accId);
     if (!acc) return 0;
-    // Saldo anterior = saldo_inicial + sum of all transactions for this account across ALL BTs up to (but not including) this BT's date
-    // For simplicity within a single BT: saldo_anterior comes from the account's saldo_inicial
-    // In cascade mode, the previous BT's final saldo becomes this BT's initial
+    // Saldo anterior = saldo transposto na criação do BT (transação "Saldo Anterior")
+    const abertura = transactions.find(t => t.account_id === accId && t.descricao === 'Saldo Anterior');
+    if (abertura) return abertura.saldo_anterior;
     return acc.saldo_inicial;
   };
 
@@ -108,14 +109,20 @@ export default function Movimentacao() {
 
   const handleSave = async () => {
     if (!currentBt) return;
-    // Delete all existing transactions for this BT
-    await supabase.from('transactions').delete().eq('bt_report_id', currentBt.id);
+    // Preserva a linha de abertura (Saldo Anterior transposto) e apaga o resto
+    const aberturas = transactions.filter(t => t.descricao === 'Saldo Anterior');
+    await supabase
+      .from('transactions')
+      .delete()
+      .eq('bt_report_id', currentBt.id)
+      .neq('descricao', 'Saldo Anterior');
 
-    const newTxs: Transaction[] = [];
-    let ordem = 0;
+    const newTxs: Transaction[] = [...aberturas];
+    let ordem = 1;
     const saldoAnteriorMap: Record<string, number> = {};
     for (const acc of accounts) {
-      saldoAnteriorMap[acc.id] = getAccountSaldoAnterior(acc.id);
+      const abertura = aberturas.find(t => t.account_id === acc.id);
+      saldoAnteriorMap[acc.id] = abertura ? abertura.saldo_anterior : getAccountSaldoAnterior(acc.id);
     }
 
     for (const acc of accounts.filter(a => a.ativo)) {
