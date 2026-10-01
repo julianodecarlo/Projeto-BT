@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import type { Account, AccountCategory } from '@/types';
 import { Plus, Trash2, Pencil } from 'lucide-react';
+import { MoneyInput } from './ui/MoneyInput';
 
 interface AccountModalProps {
   open: boolean;
@@ -98,7 +99,7 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
               </Select>
             </Field>
             <Field label="Saldo Inicial (R$)">
-              <Input type="number" step="0.01" value={saldoInicial} onChange={(e) => setSaldoInicial(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(saldoInicial) || null} onValueChange={(v) => setSaldoInicial(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
           </div>
           <div className="flex justify-end gap-2 mt-3">

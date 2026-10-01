@@ -6,6 +6,7 @@ import { Card, Button, Input, Field, Select, EmptyState, Badge } from '@/compone
 import { formatCurrency, toDecimal } from '@/lib/format';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
+import { MoneyInput } from '@/components/ui/MoneyInput';
 
 const FONTES = [
   { key: 'fonte_5' as const, label: 'Convênio (Fonte 5)' },
@@ -149,12 +150,10 @@ export default function Convenios() {
             </Field>
             {FONTES.map(f => (
               <Field key={f.key} label={`${f.label} (R$)`}>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={fontes[f.key]}
-                  onChange={(e) => setFontes({ ...fontes, [f.key]: e.target.value })}
-                  placeholder="0,00"
+                <MoneyInput
+                  value={Number(fontes[f.key]) || null}
+                  onValueChange={(v) => setFontes({ ...fontes, [f.key]: v ? String(v) : '' })}
+                  className="w-full px-3 py-2 text-sm"
                 />
               </Field>
             ))}

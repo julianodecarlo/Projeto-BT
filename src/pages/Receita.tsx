@@ -7,6 +7,7 @@ import Decimal from 'decimal.js';
 import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { RevenueOwn, RevenueType, Subalinea } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
+import { MoneyInput } from '@/components/ui/MoneyInput';
 
 export default function Receita() {
   const { currentBt, accounts } = useBt();
@@ -210,15 +211,11 @@ export default function Receita() {
   };
 
   const cellInput = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => (
-    <input
-      type="number"
-      step="0.01"
-      value={getCell(r, field)}
-      onChange={(e) => setCell(r, field, e.target.value)}
-      onBlur={() => commitCell(r, field)}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-      className="w-24 text-right bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-1 py-1 outline-none transition-colors"
-      placeholder="0,00"
+    <MoneyInput
+      value={parseFloat(getCell(r, field)) || null}
+      onValueChange={(v) => setCell(r, field, v ? String(v) : '')}
+      onKeyDown={() => {}}
+      className="w-24 px-1 py-1 text-sm"
     />
   );
 
@@ -353,10 +350,10 @@ export default function Receita() {
               </Select>
             </Field>
             <Field label="Saldo Anterior (R$)">
-              <Input type="number" step="0.01" value={revSaldoAnt} onChange={(e) => setRevSaldoAnt(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(revSaldoAnt) || null} onValueChange={(v) => setRevSaldoAnt(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
             <Field label="Arrecadação (R$)">
-              <Input type="number" step="0.01" value={revArrecadacao} onChange={(e) => setRevArrecadacao(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(revArrecadacao) || null} onValueChange={(v) => setRevArrecadacao(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
             <div className="flex items-end">
               <div className="text-sm text-slate-600 pb-2">
@@ -435,13 +432,13 @@ export default function Receita() {
               </Select>
             </Field>
             <Field label="Saldo Anterior (R$)">
-              <Input type="number" step="0.01" value={revSaldoAnt} onChange={(e) => setRevSaldoAnt(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(revSaldoAnt) || null} onValueChange={(v) => setRevSaldoAnt(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
             <Field label="Caixa (R$)">
-              <Input type="number" step="0.01" value={revCaixa} onChange={(e) => setRevCaixa(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(revCaixa) || null} onValueChange={(v) => setRevCaixa(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
             <Field label="Bancos (R$)">
-              <Input type="number" step="0.01" value={revBancos} onChange={(e) => setRevBancos(e.target.value)} placeholder="0,00" />
+              <MoneyInput value={Number(revBancos) || null} onValueChange={(v) => setRevBancos(v ? String(v) : '')} className="w-full px-3 py-2 text-sm" />
             </Field>
             <Field label="Conta">
               <Select value={revAccountId} onChange={(e) => setRevAccountId(e.target.value)}>

@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Save, FileText, Check } from 'lucide-react';
+import { Save, FileText, Check, Landmark, Shuffle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
-import { Card, Button, EmptyState } from '@/components/ui/Field';
+import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
+import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Transaction, BudgetType, Account } from '@/types';
-import Transferencias from '@/components/Transferencias';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
 const budgetTypes: { value: BudgetType; label: string }[] = [
@@ -27,6 +27,15 @@ export default function Movimentacao() {
   const [inputs, setInputs] = useState<Record<string, RowInput>>({});
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // Formulários de transferência
+  const [repasseValor, setRepasseValor] = useState<number | null>(null);
+  const [livreOrigem, setLivreOrigem] = useState('');
+  const [livreDestino, setLivreDestino] = useState('');
+  const [livreValor, setLivreValor] = useState<number | null>(null);
+  const [transferFlash, setTransferFlash] = useState<string | null>(null);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [savingTransfer, setSavingTransfer] = useState(false);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -74,7 +83,6 @@ export default function Movimentacao() {
   const getAccountSaldoAnterior = (accId: string): number => {
     const acc = accounts.find(a => a.id === accId);
     if (!acc) return 0;
-    // Saldo anterior = saldo transposto na criação do BT (transação "Saldo Anterior")
     const abertura = transactions.find(t => t.account_id === accId && t.descricao === 'Saldo Anterior');
     if (abertura) return abertura.saldo_anterior;
     return acc.saldo_inicial;
@@ -92,9 +100,22 @@ export default function Movimentacao() {
     );
   };
 
+  // Soma líquida das transferências (repasse, livre) por conta a partir das transações
+  const transferenciasPorConta = new Map<string, number>();
+  for (const tx of transactions) {
+    if (tx.tipo === 'repasse_reitoria' || tx.tipo === 'transf_livre' || tx.tipo === 'transf_tesouro_receita' || tx.tipo === 'transf_tesouro_diarias') {
+      const atual = transferenciasPorConta.get(tx.account_id) ?? 0;
+      transferenciasPorConta.set(
+        tx.account_id,
+        tx.tipo_movimento === 'entrada' ? atual + tx.valor : atual - tx.valor
+      );
+    }
+  }
+
   const getAccountSaldoFinal = (accId: string): number => {
     const subtotal = getAccountSubtotal(accId);
-    return toDecimal(getAccountSaldoAnterior(accId)).minus(toDecimal(subtotal)).toNumber();
+    const transf = transferenciasPorConta.get(accId) ?? 0;
+    return toDecimal(getAccountSaldoAnterior(accId)).minus(toDecimal(subtotal)).plus(toDecimal(transf)).toNumber();
   };
 
   const handleInputChange = (accId: string, field: keyof RowInput, value: string) => {
@@ -106,16 +127,36 @@ export default function Movimentacao() {
 
   const handleSave = async () => {
     if (!currentBt) return;
-    // Preserva a linha de abertura (Saldo Anterior transposto) e apaga o resto
+    // Preserva a linha de abertura (Saldo Anterior transposto) e as transferências
     const aberturas = transactions.filter(t => t.descricao === 'Saldo Anterior');
+    const transferencias = transactions.filter(t => t.tipo != null);
     await supabase
       .from('transactions')
       .delete()
       .eq('bt_report_id', currentBt.id)
       .neq('descricao', 'Saldo Anterior');
 
+    // Reinsere as transferências preservadas
+    let ordem = 0;
+    for (const transf of transferencias) {
+      await supabase.from('transactions').insert({
+        bt_report_id: currentBt.id,
+        account_id: transf.account_id,
+        descricao: transf.descricao,
+        tipo_orcamento: null,
+        tipo_movimento: transf.tipo_movimento,
+        valor: transf.valor,
+        saldo_anterior: transf.saldo_anterior,
+        saldo_final: transf.saldo_final,
+        data_lancamento: transf.data_lancamento,
+        tipo: transf.tipo,
+        ordem: ++ordem,
+      });
+    }
+    await fetchTransactions();
+
     const newTxs: Transaction[] = [...aberturas];
-    let ordem = 1;
+    ordem = 10;
     const saldoAnteriorMap: Record<string, number> = {};
     for (const acc of accounts) {
       const abertura = aberturas.find(t => t.account_id === acc.id);
@@ -157,12 +198,134 @@ export default function Movimentacao() {
       }
     }
 
-    setTransactions(newTxs);
+    setTransactions([...newTxs, ...transferencias]);
     setSavedFlash('Movimentações salvas com sucesso!');
     setTimeout(() => setSavedFlash(null), 3000);
   };
 
+  const insertTransfer = async (
+    tipo: 'repasse_reitoria' | 'transf_livre',
+    fromId: string | null,
+    toId: string | null,
+    valor: number,
+    descricao: string
+  ): Promise<boolean> => {
+    if (!currentBt || valor <= 0) return false;
+
+    const getSaldoAtual = async (accId: string): Promise<number> => {
+      const { data: lastTx } = await supabase
+        .from('transactions')
+        .select('saldo_final')
+        .eq('bt_report_id', currentBt.id)
+        .eq('account_id', accId)
+        .order('ordem', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastTx) return lastTx.saldo_final;
+      const { data: accData } = await supabase.from('accounts').select('saldo_inicial').eq('id', accId).maybeSingle();
+      return accData?.saldo_inicial ?? 0;
+    };
+
+    // Repasse: apenas credita a conta destino
+    if (!fromId && toId) {
+      const saldoAnt = await getSaldoAtual(toId);
+      const { error } = await supabase.from('transactions').insert({
+        bt_report_id: currentBt.id,
+        account_id: toId,
+        descricao,
+        tipo_movimento: 'entrada',
+        valor,
+        saldo_anterior: saldoAnt,
+        saldo_final: toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber(),
+        data_lancamento: currentBt.data,
+        tipo,
+      });
+      return !error;
+    }
+
+    if (!fromId || !toId) return false;
+    const saldoFrom = await getSaldoAtual(fromId);
+    const saldoTo = await getSaldoAtual(toId);
+    const { error: errFrom } = await supabase.from('transactions').insert({
+      bt_report_id: currentBt.id,
+      account_id: fromId,
+      descricao,
+      tipo_movimento: 'saida',
+      valor,
+      saldo_anterior: saldoFrom,
+      saldo_final: toDecimal(saldoFrom).minus(toDecimal(valor)).toNumber(),
+      data_lancamento: currentBt.data,
+      tipo,
+    });
+    const { error: errTo } = await supabase.from('transactions').insert({
+      bt_report_id: currentBt.id,
+      account_id: toId,
+      descricao,
+      tipo_movimento: 'entrada',
+      valor,
+      saldo_anterior: saldoTo,
+      saldo_final: toDecimal(saldoTo).plus(toDecimal(valor)).toNumber(),
+      data_lancamento: currentBt.data,
+      tipo,
+    });
+    return !errFrom && !errTo;
+  };
+
+  const handleSaveRepasse = async () => {
+    if (!currentBt || !repasseValor || repasseValor <= 0) return;
+    const tesouro = accounts.find(a => a.nome.toLowerCase().includes('tesouro'));
+    if (!tesouro) {
+      setTransferError('Conta Tesouro não encontrada. Cadastre uma conta com "Tesouro" no nome.');
+      return;
+    }
+    setSavingTransfer(true);
+    setTransferError(null);
+    const ok = await insertTransfer('repasse_reitoria', null, tesouro.id, repasseValor, 'Repasse Financeiro da Reitoria');
+    setSavingTransfer(false);
+    if (ok) {
+      setRepasseValor(null);
+      setTransferFlash('Repasse registrado e somado à Conta Tesouro.');
+      setTimeout(() => setTransferFlash(null), 3000);
+      fetchTransactions();
+    } else {
+      setTransferError('Não foi possível registrar o repasse. Tente novamente.');
+    }
+  };
+
+  const handleSaveLivre = async () => {
+    if (!currentBt || !livreOrigem || !livreDestino || !livreValor || livreValor === 0) return;
+    if (livreOrigem === livreDestino) {
+      setTransferError('A conta origem e a conta destino devem ser diferentes.');
+      return;
+    }
+    setSavingTransfer(true);
+    setTransferError(null);
+    const valor = Math.abs(livreValor);
+    const inverte = livreValor < 0;
+    const fromId = inverte ? livreDestino : livreOrigem;
+    const toId = inverte ? livreOrigem : livreDestino;
+    const origem = accounts.find(a => a.id === livreOrigem);
+    const destino = accounts.find(a => a.id === livreDestino);
+    const ok = await insertTransfer(
+      'transf_livre',
+      fromId,
+      toId,
+      valor,
+      `Transferência ${origem?.nome} → ${destino?.nome}`
+    );
+    setSavingTransfer(false);
+    if (ok) {
+      setLivreValor(null);
+      setTransferFlash('Transferência registrada.');
+      setTimeout(() => setTransferFlash(null), 3000);
+      fetchTransactions();
+    } else {
+      setTransferError('Não foi possível registrar a transferência. Tente novamente.');
+    }
+  };
+
   const totalGeral = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSubtotal(acc.id), 0);
+  const totalTransferencias = Array.from(transferenciasPorConta.values()).reduce((s, v) => s + v, 0);
   const totaisPorColuna = accounts.filter(a => a.ativo).reduce(
     (acc, a) => {
       const row = inputs[a.id];
@@ -189,15 +352,19 @@ export default function Movimentacao() {
   let tabIndex = 0;
 
   return (
-      <div className="flex-1 overflow-y-auto relative">
-      <div className="flex-1">
-      {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt?.numero ?? ''} /></div>}
-      <div className="p-6 space-y-4">
+    <>
+    {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt.numero} /></div>}
+    <BtFechadoGuard fechado={fechado}>
+    <div className="p-6 space-y-4">
       {/* Summary bar */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="p-3">
           <p className="text-xs text-slate-500">Total de Pagamentos no Período</p>
           <p className="text-base font-bold text-amber-700">{formatCurrency(totalGeral)}</p>
+        </Card>
+        <Card className="p-3">
+          <p className="text-xs text-slate-500">Repasses / Transferências</p>
+          <p className={`text-base font-bold ${totalTransferencias < 0 ? 'text-red-700' : 'text-blue-700'}`}>{formatCurrency(totalTransferencias)}</p>
         </Card>
         <Card className="p-3">
           <p className="text-xs text-slate-500">Contas Ativas</p>
@@ -213,6 +380,16 @@ export default function Movimentacao() {
       {savedFlash && (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700 font-medium">
           <Check className="w-4 h-4" /> {savedFlash}
+        </div>
+      )}
+      {transferFlash && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700 font-medium">
+          <Check className="w-4 h-4" /> {transferFlash}
+        </div>
+      )}
+      {transferError && (
+        <div className="px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 font-medium">
+          {transferError}
         </div>
       )}
 
@@ -236,6 +413,7 @@ export default function Movimentacao() {
                 <th className="px-4 py-2.5 text-right font-semibold">Orçamento Vigente</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Restos a Pagar</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Diversos Credores</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Repasse / Transferências</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Sub-Total</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Saldo Final</th>
               </tr>
@@ -243,7 +421,8 @@ export default function Movimentacao() {
             <tbody>
               {activeAccounts.map(acc => {
                 const row = inputs[acc.id] || { vigente: '', restos_pagar: '', diversos_credores: '' };
-                const subtotal = getAccountSubtotal(acc.id);
+                const transf = transferenciasPorConta.get(acc.id) ?? 0;
+                const subtotal = getAccountSubtotal(acc.id) + transf;
                 const saldoFinal = getAccountSaldoFinal(acc.id);
                 const saldoAnterior = getAccountSaldoAnterior(acc.id);
                 return (
@@ -256,17 +435,14 @@ export default function Movimentacao() {
                       const refKey = `${acc.id}-${field}`;
                       return (
                         <td key={field} className="px-2 py-2 text-right">
-                          <input
-                            ref={(el) => { inputRefs.current[refKey] = el; }}
-                            type="number"
-                            step="0.01"
-                            value={row[field]}
-                            onChange={(e) => handleInputChange(acc.id, field, e.target.value)}
+                          <MoneyInput
+                            inputRef={(el) => { inputRefs.current[refKey] = el; }}
+                            value={row[field] ? parseFloat(row[field]) : null}
+                            onValueChange={(v) => handleInputChange(acc.id, field, v ? String(v) : '')}
                             disabled={fechado}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
-                                // Find next input and focus it
                                 const allKeys = Object.keys(inputRefs.current).sort();
                                 const currentIdx = allKeys.indexOf(refKey);
                                 const nextKey = allKeys[currentIdx + 1];
@@ -276,12 +452,14 @@ export default function Movimentacao() {
                               }
                             }}
                             placeholder="0,00"
-                            tabIndex={++tabIndex}
-                            className="w-28 px-2 py-1.5 text-sm text-right border border-slate-300 rounded-md outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors"
+                            className="w-28 px-2 py-1.5 text-sm"
                           />
                         </td>
                       );
                     })}
+                    <td className={`px-4 py-2 text-right font-semibold ${transf < 0 ? 'text-red-700' : transf > 0 ? 'text-blue-700' : 'text-slate-400'}`}>
+                      {formatCurrency(transf)}
+                    </td>
                     <td className="px-4 py-2 text-right font-bold text-slate-700 bg-slate-50/50">
                       {formatCurrency(subtotal)}
                     </td>
@@ -298,7 +476,8 @@ export default function Movimentacao() {
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.vigente)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.restos_pagar)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.diversos_credores)}</td>
-                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalGeral)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalTransferencias)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalGeral + totalTransferencias)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalSaldoFinal)}</td>
               </tr>
             </tfoot>
@@ -306,16 +485,62 @@ export default function Movimentacao() {
         </div>
       </Card>
 
-      {/* Módulos de Transferência (Repasse, Específicas e Livre) */}
-      <BtFechadoGuard fechado={fechado}>
-        <Transferencias />
-      </BtFechadoGuard>
+      {/* Módulos simples de lançamento */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <Landmark className="w-4 h-4 text-emerald-600" />
+            <h3 className="text-sm font-bold text-slate-800">Repasse da Reitoria</h3>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            O valor é creditado na Conta Tesouro e aparece na coluna Repasse / Transferências.
+          </p>
+          <Field label="Valor do repasse (R$)">
+            <MoneyInput value={repasseValor} onValueChange={setRepasseValor} className="w-full px-3 py-2 text-sm" />
+          </Field>
+          <div className="flex justify-end mt-4">
+            <Button size="sm" onClick={handleSaveRepasse} disabled={savingTransfer || !repasseValor || repasseValor <= 0}>
+              {savingTransfer ? 'Registrando...' : 'Registrar Repasse'}
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <Shuffle className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-800">Transferência Livre entre Contas</h3>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            O valor sai da Conta Origem (débito) e entra na Conta Destino (crédito). Valores negativos invertem o movimento.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="Conta Origem">
+              <Select value={livreOrigem} onChange={(e) => setLivreOrigem(e.target.value)}>
+                {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+              </Select>
+            </Field>
+            <Field label="Conta Destino">
+              <Select value={livreDestino} onChange={(e) => setLivreDestino(e.target.value)}>
+                {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+              </Select>
+            </Field>
+            <Field label="Valor (R$)">
+              <MoneyInput value={livreValor} onValueChange={setLivreValor} className="w-full px-3 py-2 text-sm" />
+            </Field>
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button size="sm" onClick={handleSaveLivre} disabled={savingTransfer || !livreValor || livreValor === 0}>
+              {savingTransfer ? 'Registrando...' : 'Registrar Transferência'}
+            </Button>
+          </div>
+        </Card>
+      </div>
 
       <p className="text-xs text-slate-400 px-1">
-        Dica: Use a tecla TAB para navegar rapidamente entre os campos. Pressione Enter para pular para o próximo campo. Clique em Salvar quando terminar.
+        Dica: Use a tecla TAB para navegar rapidamente entre os campos. Pressione Enter para pular para o próximo campo. Clique em Salvar quando terminar. Os valores de Repasse / Transferências são registrados imediatamente, sem precisar clicar em Salvar.
       </p>
-      </div>
-      </div>
     </div>
+    </BtFechadoGuard>
+    </>
   );
 }
