@@ -5,6 +5,7 @@ import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, EmptyState, Badge } from '@/components/ui/Field';
 import { formatCurrency, toDecimal } from '@/lib/format';
 import type { Convenio } from '@/types';
+import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
 const FONTES = [
   { key: 'fonte_5' as const, label: 'Convênio (Fonte 5)' },
@@ -17,6 +18,7 @@ type FonteKey = (typeof FONTES)[number]['key'];
 
 export default function Convenios() {
   const { currentBt, accounts } = useBt();
+  const fechado = currentBt?.status === 'fechado';
   const [convenios, setConvenios] = useState<Convenio[]>([]);
 
   // Form
@@ -111,6 +113,9 @@ export default function Convenios() {
   const totalGeralConvenios = convenios.reduce((s, c) => s + totalGeral(c), 0);
 
   return (
+    <>
+    {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt?.numero ?? ''} /></div>}
+    <BtFechadoGuard fechado={fechado}>
     <div className="p-6 space-y-4">
       {/* Header actions */}
       <Card className="p-4 flex items-center justify-between">
@@ -281,5 +286,7 @@ export default function Convenios() {
         )}
       </Card>
     </div>
+    </BtFechadoGuard>
+    </>
   );
 }

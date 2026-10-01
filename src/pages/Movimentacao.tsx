@@ -5,6 +5,8 @@ import { useBt } from '@/context/BtContext';
 import { Card, Button, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Transaction, BudgetType, Account } from '@/types';
+import Transferencias from '@/components/Transferencias';
+import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
 const budgetTypes: { value: BudgetType; label: string }[] = [
   { value: 'vigente', label: 'Orçamento Vigente' },
@@ -20,6 +22,7 @@ interface RowInput {
 
 export default function Movimentacao() {
   const { currentBt, accounts } = useBt();
+  const fechado = currentBt?.status === 'fechado';
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [inputs, setInputs] = useState<Record<string, RowInput>>({});
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
@@ -186,7 +189,10 @@ export default function Movimentacao() {
   let tabIndex = 0;
 
   return (
-    <div className="p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto relative">
+      <div className="flex-1">
+      {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt?.numero ?? ''} /></div>}
+      <div className="p-6 space-y-4">
       {/* Summary bar */}
       <div className="grid grid-cols-3 gap-3">
         <Card className="p-3">
@@ -217,7 +223,7 @@ export default function Movimentacao() {
             <h3 className="text-sm font-bold text-slate-800">Lançamento de Movimentações</h3>
             <p className="text-xs text-slate-500 mt-0.5">Digite os valores diretamente. Use TAB para navegar entre os campos.</p>
           </div>
-          <Button onClick={handleSave}>
+          <Button onClick={handleSave} disabled={fechado}>
             <Save className="w-4 h-4" /> Salvar
           </Button>
         </div>
@@ -256,6 +262,7 @@ export default function Movimentacao() {
                             step="0.01"
                             value={row[field]}
                             onChange={(e) => handleInputChange(acc.id, field, e.target.value)}
+                            disabled={fechado}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
@@ -299,9 +306,16 @@ export default function Movimentacao() {
         </div>
       </Card>
 
+      {/* Módulos de Transferência (Repasse, Específicas e Livre) */}
+      <BtFechadoGuard fechado={fechado}>
+        <Transferencias />
+      </BtFechadoGuard>
+
       <p className="text-xs text-slate-400 px-1">
         Dica: Use a tecla TAB para navegar rapidamente entre os campos. Pressione Enter para pular para o próximo campo. Clique em Salvar quando terminar.
       </p>
+      </div>
+      </div>
     </div>
   );
 }

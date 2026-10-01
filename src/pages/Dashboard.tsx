@@ -11,6 +11,7 @@ import BtOptionsMenu from '@/components/BtOptionsMenu';
 import AllBtsModal from '@/components/AllBtsModal';
 import { BackupRestoreSection } from '@/components/BackupRestore';
 import Modal from '@/components/ui/Modal';
+import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
 interface DashboardProps {
   onNavigate: (page: PageKey) => void;
@@ -77,6 +78,9 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
   };
 
   return (
+    <>
+    {currentBt?.status === 'fechado' && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt.numero} /></div>}
+    <BtFechadoGuard fechado={currentBt?.status === 'fechado'}>
     <div className="p-6 space-y-6">
       {/* Hero section */}
       <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
@@ -211,5 +215,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
         <BackupRestoreSection />
       </Modal>
     </div>
+    </BtFechadoGuard>
+    </>
   );
 }

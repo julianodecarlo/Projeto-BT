@@ -66,6 +66,12 @@ export interface ConvenioSource {
   created_at: string;
 }
 
+export type TransactionTipo =
+  | 'repasse_reitoria'
+  | 'transf_tesouro_receita'
+  | 'transf_tesouro_diarias'
+  | 'transf_livre';
+
 export interface Transaction {
   id: string;
   bt_report_id: string;
@@ -78,6 +84,7 @@ export interface Transaction {
   saldo_final: number;
   data_lancamento: string | null;
   ordem: number;
+  tipo: TransactionTipo | null;
   created_at: string;
 }
 

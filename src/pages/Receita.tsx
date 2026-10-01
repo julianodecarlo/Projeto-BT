@@ -6,9 +6,11 @@ import { Card, Button, Input, Field, Select, EmptyState } from '@/components/ui/
 import Decimal from 'decimal.js';
 import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { RevenueOwn, RevenueType, Subalinea } from '@/types';
+import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
 export default function Receita() {
   const { currentBt, accounts } = useBt();
+  const fechado = currentBt?.status === 'fechado';
   const [revenues, setRevenues] = useState<RevenueOwn[]>([]);
   const [subalinhas, setSubalinhas] = useState<Subalinea[]>([]);
 
@@ -258,6 +260,9 @@ export default function Receita() {
   const totalGeralResumo = totalContResumo + totalFinResumo;
 
   return (
+    <>
+    {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt?.numero ?? ''} /></div>}
+    <BtFechadoGuard fechado={fechado}>
     <div className="p-6 space-y-4">
       {/* Subalíneas management */}
       <Card className="overflow-hidden">
@@ -551,5 +556,7 @@ export default function Receita() {
         A gestão dos Convênios (fontes 5/45/4/44) está na aba "Controle de Convênios" no menu.
       </div>
     </div>
+    </BtFechadoGuard>
+    </>
   );
 }

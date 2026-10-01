@@ -8,6 +8,8 @@ import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Conv
 
 type ResolutionKind = 'cheque' | 'deposito' | 'pagamento';
 
+import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
+
 interface MoneyInputProps {
   value: number | null;
   onValueChange: (value: number) => void;
@@ -77,6 +79,7 @@ function MoneyInput({ value, onValueChange, className, placeholder, onKeyDown }:
 
 export default function Conciliacao() {
   const { currentBt, accounts } = useBt();
+  const fechado = currentBt?.status === 'fechado';
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
   const [payments, setPayments] = useState<PaymentPending[]>([]);
@@ -407,6 +410,9 @@ export default function Conciliacao() {
   );
 
   return (
+    <>
+    {fechado && <div className="px-6 pt-4"><BtFechadoBanner numero={currentBt?.numero ?? ''} /></div>}
+    <BtFechadoGuard fechado={fechado}>
     <div className="p-6 space-y-4">
       {/* Summary */}
       <div className="grid grid-cols-3 gap-3">
@@ -732,5 +738,7 @@ export default function Conciliacao() {
         As baixas (Cheque Compensado, Concluído, Concluir Pagamento) valem apenas para o BT atual e não alteram saldos contábeis ou orçamentários.
       </p>
     </div>
+    </BtFechadoGuard>
+    </>
   );
 }

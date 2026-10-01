@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock } from 'lucide-react';
+import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
-import type { Transaction, Reconciliation, RevenueOwn, Cheque, DepositPending } from '@/types';
+import type { Transaction, Reconciliation, RevenueOwn, Cheque, DepositPending, BtReport } from '@/types';
 
 interface ValidationCheck {
   label: string;
@@ -25,6 +25,7 @@ export default function Fechamento() {
   const [cargoConferido, setCargoConferido] = useState('');
   const [closing, setClosing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
+  const [btAnterior, setBtAnterior] = useState<BtReport | null>(null);
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
@@ -49,6 +50,32 @@ export default function Fechamento() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // Busca o BT anterior (data imediatamente anterior à do BT atual) para importar assinaturas
+  const fetchBtAnterior = useCallback(async () => {
+    if (!currentBt) return;
+    const { data } = await supabase
+      .from('bt_reports')
+      .select('*')
+      .lt('data', currentBt.data)
+      .order('data', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setBtAnterior((data as BtReport) || null);
+  }, [currentBt]);
+
+  useEffect(() => {
+    fetchBtAnterior();
+  }, [fetchBtAnterior]);
+
+  // Importa automaticamente Nome e Cargo do BT anterior quando os campos do BT atual estão vazios
+  const handleImportSignatures = () => {
+    if (!btAnterior) return;
+    if (!elaboradoPor.trim()) setElaboradoPor(btAnterior.elaborado_por || '');
+    if (!cargoElaborado.trim()) setCargoElaborado(btAnterior.cargo_elaborado || '');
+    if (!conferidoPor.trim()) setConferidoPor(btAnterior.conferido_por || '');
+    if (!cargoConferido.trim()) setCargoConferido(btAnterior.cargo_conferido || '');
+  };
 
   if (!currentBt) {
     return (
@@ -216,6 +243,14 @@ export default function Fechamento() {
         )}
       </div>
 
+      {/* Signatures blocked indicator */}
+      {isFechado && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-lg text-sm font-medium">
+          <Lock className="w-4 h-4" />
+          BT Fechado — todos os campos, tabelas e ações estão bloqueados em todas as abas.
+        </div>
+      )}
+
       {/* Validation checks */}
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
@@ -266,7 +301,19 @@ export default function Fechamento() {
 
       {/* Signatures */}
       <Card className="p-5">
-        <h3 className="text-sm font-bold text-slate-800 mb-3">Assinaturas</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-slate-800">Assinaturas</h3>
+          {btAnterior && !isFechado && (
+            <Button size="sm" variant="secondary" onClick={handleImportSignatures}>
+              <UserCheck className="w-4 h-4" /> Importar do BT Anterior
+            </Button>
+          )}
+        </div>
+        {btAnterior && (
+          <p className="text-xs text-slate-500 mb-3">
+            Assinaturas do BT anterior ({btAnterior.numero}): {btAnterior.elaborado_por || '—'}{btAnterior.cargo_elaborado ? ` (${btAnterior.cargo_elaborado})` : ''} · {btAnterior.conferido_por || '—'}{btAnterior.cargo_conferido ? ` (${btAnterior.cargo_conferido})` : ''}. Os campos permanecem editáveis.
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Elaborado por</p>
