@@ -341,7 +341,14 @@ export default function Conciliacao() {
   const totalChequesCompensar = toNumber(sumDecimal(openItems.cheques.map(c => c.valor)));
   const totalDeposits = toNumber(sumDecimal(openItems.deposits.map(d => d.valor)));
   const totalPayments = toNumber(sumDecimal(openItems.payments.map(p => p.valor)));
-  const divergentCount = accounts.filter(a => a.ativo && reconciliations.some(r => r.account_id === a.id && r.divergente && r.saldo_extrato !== 0)).length;
+  const divergentCount = activeAccounts.filter(acc => {
+    const recon = getRecon(acc.id);
+    const saldoExtrato = recon?.saldo_extrato ?? null;
+    if (saldoExtrato === null || saldoExtrato === 0) return false;
+    const rendimento = recon?.rendimento_acumulado ?? 0;
+    const saldoConc = toDecimal(saldoExtrato).minus(toDecimal(rendimento)).minus(toDecimal(getPendencias(acc.id))).toNumber();
+    return Math.abs(toDecimal(saldoConc).minus(toDecimal(getAccountSaldoOrcamentario(acc.id))).toNumber()) > 0.01;
+  }).length;
   const totalConveniosPorConta = new Map<string, number>();
   for (const c of convenios) {
     if (!c.finance_account_id) continue;
