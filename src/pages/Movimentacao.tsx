@@ -1,18 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { Save, FileText, Check, Landmark, Shuffle } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
-import type { Transaction, BudgetType, Account } from '@/types';
+import type { Transaction, BudgetType } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
-
-const budgetTypes: { value: BudgetType; label: string }[] = [
-  { value: 'vigente', label: 'Orçamento Vigente' },
-  { value: 'restos_pagar', label: 'Restos a Pagar' },
-  { value: 'diversos_credores', label: 'Diversos Credores' },
-];
 
 interface RowInput {
   vigente: string;
@@ -36,6 +30,7 @@ export default function Movimentacao() {
   const [transferFlash, setTransferFlash] = useState<string | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
   const [savingTransfer, setSavingTransfer] = useState(false);
+  const [editingTransfer, setEditingTransfer] = useState<{ ids: string[]; origemId: string; destinoId: string; valor: number } | null>(null);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -128,46 +123,24 @@ export default function Movimentacao() {
 
   const handleSave = async () => {
     if (!currentBt) return;
-    // Preserva a linha de abertura (Saldo Anterior transposto) e as transferências
-    const aberturas = transactions.filter(t => t.descricao === 'Saldo Anterior');
-    const transferencias = transactions.filter(t => t.tipo != null);
+    // Remove apenas as linhas das colunas orçamentárias; aberturas e transferências permanecem
     await supabase
       .from('transactions')
       .delete()
       .eq('bt_report_id', currentBt.id)
-      .neq('descricao', 'Saldo Anterior');
+      .not('tipo_orcamento', 'is', null);
 
-    // Reinsere as transferências preservadas
-    let ordem = 0;
-    for (const transf of transferencias) {
-      await supabase.from('transactions').insert({
-        bt_report_id: currentBt.id,
-        account_id: transf.account_id,
-        descricao: transf.descricao,
-        tipo_orcamento: null,
-        tipo_movimento: transf.tipo_movimento,
-        valor: transf.valor,
-        saldo_anterior: transf.saldo_anterior,
-        saldo_final: transf.saldo_final,
-        data_lancamento: transf.data_lancamento,
-        tipo: transf.tipo,
-        ordem: ++ordem,
-      });
-    }
-    await fetchTransactions();
-
-    const newTxs: Transaction[] = [...aberturas];
-    ordem = 10;
+    const maxOrdem = transactions.length > 0 ? Math.max(...transactions.map(t => t.ordem ?? 0)) : 0;
+    let ordem = maxOrdem + 1;
     const saldoAnteriorMap: Record<string, number> = {};
     for (const acc of accounts) {
-      const abertura = aberturas.find(t => t.account_id === acc.id);
-      saldoAnteriorMap[acc.id] = abertura ? abertura.saldo_anterior : getAccountSaldoAnterior(acc.id);
+      saldoAnteriorMap[acc.id] = getAccountSaldoAnterior(acc.id);
     }
 
     for (const acc of accounts.filter(a => a.ativo)) {
       const row = inputs[acc.id];
       if (!row) continue;
-      const entries: { field: keyof RowInput; tipo: BudgetType | null; desc: string }[] = [
+      const entries: { field: keyof RowInput; tipo: BudgetType; desc: string }[] = [
         { field: 'vigente', tipo: 'vigente', desc: 'Orçamento Vigente' },
         { field: 'restos_pagar', tipo: 'restos_pagar', desc: 'Restos a Pagar' },
         { field: 'diversos_credores', tipo: 'diversos_credores', desc: 'Diversos Credores' },
@@ -179,7 +152,7 @@ export default function Movimentacao() {
           const v = toDecimal(val);
           const saldoAnt = saldoAnteriorMap[acc.id];
           const saldoFin = toDecimal(saldoAnt).minus(v).toNumber();
-          const { data, error } = await supabase.from('transactions').insert({
+          await supabase.from('transactions').insert({
             bt_report_id: currentBt.id,
             account_id: acc.id,
             descricao: entry.desc,
@@ -189,17 +162,15 @@ export default function Movimentacao() {
             saldo_anterior: saldoAnt,
             saldo_final: saldoFin,
             data_lancamento: currentBt.data,
-            ordem: ++ordem,
-          }).select().single();
-          if (!error && data) {
-            newTxs.push(data as Transaction);
-            saldoAnteriorMap[acc.id] = saldoFin;
-          }
+            ordem: ordem++,
+          });
+          saldoAnteriorMap[acc.id] = saldoFin;
         }
       }
     }
 
-    setTransactions([...newTxs, ...transferencias]);
+    // Recarrega do banco: os valores permanecem na tela como histórico e continuam editáveis
+    await fetchTransactions();
     setSavedFlash('Movimentações salvas com sucesso!');
     setTimeout(() => setSavedFlash(null), 3000);
   };
@@ -301,6 +272,10 @@ export default function Movimentacao() {
     }
     setSavingTransfer(true);
     setTransferError(null);
+    // Na edição, remove o par antigo antes de registrar o novo
+    if (editingTransfer) {
+      await supabase.from('transactions').delete().in('id', editingTransfer.ids);
+    }
     const valor = Math.abs(livreValor);
     const inverte = livreValor < 0;
     const fromId = inverte ? livreDestino : livreOrigem;
@@ -317,12 +292,35 @@ export default function Movimentacao() {
     setSavingTransfer(false);
     if (ok) {
       setLivreValor(null);
-      setTransferFlash('Transferência registrada.');
+      setEditingTransfer(null);
+      setTransferFlash(editingTransfer ? 'Transferência atualizada.' : 'Transferência registrada.');
       setTimeout(() => setTransferFlash(null), 3000);
       fetchTransactions();
     } else {
       setTransferError('Não foi possível registrar a transferência. Tente novamente.');
     }
+  };
+
+  const startEditTransfer = (p: { saida: Transaction; entrada: Transaction }) => {
+    setEditingTransfer({
+      ids: [p.saida.id, p.entrada.id],
+      origemId: p.saida.account_id,
+      destinoId: p.entrada.account_id,
+      valor: p.saida.valor,
+    });
+    setLivreOrigem(p.saida.account_id);
+    setLivreDestino(p.entrada.account_id);
+    setLivreValor(p.saida.valor);
+  };
+
+  const deleteTransfer = async (p: { saida: Transaction; entrada: Transaction }) => {
+    const ids = p.saida.id === p.entrada.id ? [p.saida.id] : [p.saida.id, p.entrada.id];
+    await supabase.from('transactions').delete().in('id', ids);
+    if (editingTransfer && ids.some(id => editingTransfer.ids.includes(id))) {
+      setEditingTransfer(null);
+      setLivreValor(null);
+    }
+    fetchTransactions();
   };
 
   const totalGeral = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSubtotal(acc.id), 0);
@@ -340,6 +338,17 @@ export default function Movimentacao() {
     { vigente: 0, restos_pagar: 0, diversos_credores: 0 }
   );
   const totalSaldoFinal = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSaldoFinal(acc.id), 0);
+
+  const transferLivrePairs = useMemo(() => {
+    const saidas = transactions.filter(t => t.tipo === 'transf_livre' && t.tipo_movimento === 'saida');
+    const entradas = transactions.filter(t => t.tipo === 'transf_livre' && t.tipo_movimento === 'entrada');
+    return saidas
+      .map(saida => ({
+        saida,
+        entrada: entradas.find(e => e.valor === saida.valor && e.data_lancamento === saida.data_lancamento),
+      }))
+      .filter(p => p.entrada != null) as { saida: Transaction; entrada: Transaction }[];
+  }, [transactions]);
 
   if (!currentBt) {
     return (
@@ -529,11 +538,66 @@ export default function Movimentacao() {
               <MoneyInput value={livreValor} onValueChange={setLivreValor} className="w-full px-3 py-2 text-sm" />
             </Field>
           </div>
-          <div className="flex justify-end mt-4">
+          <div className="flex justify-end gap-2 mt-4">
+            {editingTransfer && (
+              <Button size="sm" variant="ghost" onClick={() => { setEditingTransfer(null); setLivreOrigem(''); setLivreDestino(''); setLivreValor(null); }}>
+                <X className="w-4 h-4" /> Cancelar Edição
+              </Button>
+            )}
             <Button size="sm" onClick={handleSaveLivre} disabled={savingTransfer || !livreValor || livreValor === 0}>
-              {savingTransfer ? 'Registrando...' : 'Registrar Transferência'}
+              {savingTransfer ? 'Registrando...' : editingTransfer ? 'Atualizar Transferência' : 'Registrar Transferência'}
             </Button>
           </div>
+
+          {transferLivrePairs.length > 0 && (
+            <div className="mt-5 border border-slate-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Transferências Registradas</h4>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
+                    <th className="px-3 py-2 text-left font-semibold">Conta Origem</th>
+                    <th className="px-3 py-2 text-left font-semibold">Conta Destino</th>
+                    <th className="px-3 py-2 text-right font-semibold">Valor</th>
+                    <th className="px-3 py-2 text-center font-semibold">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transferLivrePairs.map(p => (
+                    <tr
+                      key={p.saida.id}
+                      className={`border-t border-slate-100 ${editingTransfer?.ids.includes(p.saida.id) ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className="px-3 py-2 text-slate-700">{accounts.find(a => a.id === p.saida.account_id)?.nome ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-700">{accounts.find(a => a.id === p.entrada.account_id)?.nome ?? '—'}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-blue-700">{formatCurrency(p.saida.valor)}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => startEditTransfer(p)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-40"
+                            title="Editar"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteTransfer(p)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
       </div>
 
