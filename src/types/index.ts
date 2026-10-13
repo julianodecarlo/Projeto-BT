@@ -132,6 +132,7 @@ export interface Reconciliation {
   account_id: string;
   saldo_extrato: number;
   rendimento_acumulado: number;
+  ajuste_arredondamento: number;
   saldo_conciliado: number;
   saldo_orcamentario: number;
   divergente: boolean;

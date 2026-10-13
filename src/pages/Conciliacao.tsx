@@ -301,7 +301,8 @@ export default function Conciliacao() {
     const pendencias = getPendencias(accId);
     const rendimento = field === 'rendimento_acumulado' ? value : (existing?.rendimento_acumulado ?? 0);
     const saldoExtrato = field === 'saldo_extrato' ? value : (existing?.saldo_extrato ?? 0);
-    const saldoConciliado = toCentavos(toDecimal(toCentavos(saldoExtrato)).minus(toDecimal(rendimento)).minus(toDecimal(pendencias)).toNumber());
+    const ajuste = field === 'ajuste_arredondamento' ? value : (existing?.ajuste_arredondamento ?? 0);
+    const saldoConciliado = toCentavos(toDecimal(toCentavos(saldoExtrato)).minus(toDecimal(rendimento)).minus(toDecimal(ajuste)).minus(toDecimal(pendencias)).toNumber());
     const divergente = !isConciliado(saldoConciliado, saldoOrcamentario);
 
     if (existing) {
@@ -310,6 +311,7 @@ export default function Conciliacao() {
         .update({
           saldo_extrato: saldoExtrato,
           rendimento_acumulado: rendimento,
+          ajuste_arredondamento: ajuste,
           saldo_conciliado: saldoConciliado,
           saldo_orcamentario: saldoOrcamentario,
           divergente,
@@ -328,6 +330,7 @@ export default function Conciliacao() {
           account_id: accId,
           saldo_extrato: saldoExtrato,
           rendimento_acumulado: rendimento,
+          ajuste_arredondamento: ajuste,
           saldo_conciliado: saldoConciliado,
           saldo_orcamentario: saldoOrcamentario,
           divergente,
@@ -357,7 +360,8 @@ export default function Conciliacao() {
     const saldoExtrato = recon?.saldo_extrato ?? null;
     if (saldoExtrato === null || saldoExtrato === 0) return false;
     const rendimento = recon?.rendimento_acumulado ?? 0;
-    const saldoConc = toDecimal(saldoExtrato).minus(toDecimal(rendimento)).minus(toDecimal(getPendencias(acc.id))).toNumber();
+    const ajuste = recon?.ajuste_arredondamento ?? 0;
+    const saldoConc = toCentavos(toDecimal(toCentavos(saldoExtrato)).minus(toDecimal(rendimento)).minus(toDecimal(ajuste)).minus(toDecimal(getPendencias(acc.id))).toNumber());
     return !isConciliado(saldoConc, getAccountSaldoOrcamentario(acc.id));
   }).length;
   const totalConveniosPorConta = new Map<string, number>();
@@ -481,7 +485,7 @@ export default function Conciliacao() {
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-800">Conciliação por Conta</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Conciliado quando Extrato − Rendimentos − Pendências = Saldo Orçamentário</p>
+          <p className="text-xs text-slate-500 mt-0.5">Conciliado quando Extrato − Rendimentos − Ajuste BB − Pendências = Saldo Orçamentário</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -491,6 +495,7 @@ export default function Conciliacao() {
                 <th className="px-4 py-2 text-right font-semibold">Saldo Orçamentário</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Extrato</th>
                 <th className="px-4 py-2 text-right font-semibold">Rendimentos Acum.</th>
+                <th className="px-2 py-2 text-center font-semibold" title="Compensação de arredondamento BB">Ajuste BB</th>
                 <th className="px-4 py-2 text-right font-semibold">Pendências</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Conciliado</th>
                 <th className="px-4 py-2 text-center font-semibold">Status</th>
@@ -503,8 +508,9 @@ export default function Conciliacao() {
                 const pend = getPendencias(acc.id);
                 const saldoExtrato = recon?.saldo_extrato ?? null;
                 const rendimento = recon?.rendimento_acumulado ?? 0;
-                // Lado bancário (extrato - rendimentos - pendências) confrontado com o orçamentário
-                const saldoConc = toCentavos(toDecimal(toCentavos(saldoExtrato ?? 0)).minus(toDecimal(rendimento)).minus(toDecimal(pend)).toNumber());
+                const ajuste = recon?.ajuste_arredondamento ?? 0;
+                // Lado bancário (extrato - rendimentos - ajuste - pendências) confrontado com o orçamentário
+                const saldoConc = toCentavos(toDecimal(toCentavos(saldoExtrato ?? 0)).minus(toDecimal(rendimento)).minus(toDecimal(ajuste)).minus(toDecimal(pend)).toNumber());
                 const extratoVazio = saldoExtrato === null || saldoExtrato === 0;
                 const divergente = !extratoVazio && !isConciliado(saldoConc, saldoOrc);
                 return (
@@ -519,7 +525,7 @@ export default function Conciliacao() {
                         value={saldoExtrato}
                         onValueChange={(v) => updateRecon(acc.id, 'saldo_extrato', v)}
                         onKeyDown={(e) => handleNav(e, `rendimento:${acc.id}`)}
-                        className="w-32"
+                        className="w-32 pr-3"
                         placeholder="0,00"
                       />
                     </td>
@@ -527,10 +533,34 @@ export default function Conciliacao() {
                       <MoneyInput
                         value={recon?.rendimento_acumulado ?? 0}
                         onValueChange={(v) => updateRecon(acc.id, 'rendimento_acumulado', v)}
-                        onKeyDown={(e) => handleNav(e, activeAccounts[activeAccounts.findIndex(x => x.id === acc.id) + 1] ? `extrato:${activeAccounts[activeAccounts.findIndex(x => x.id === acc.id) + 1].id}` : null)}
-                        className="w-28"
+                        onKeyDown={(e) => handleNav(e, `ajuste:${acc.id}`)}
+                        className="w-28 pr-3"
                         placeholder="0,00"
                       />
+                    </td>
+                    <td data-recon-cell={`ajuste:${acc.id}`} className="px-2 py-2.5 text-center">
+                      <div className="inline-flex items-center rounded-lg border border-slate-200 overflow-hidden">
+                        <button
+                          onClick={() => updateRecon(acc.id, 'ajuste_arredondamento', ajuste === -0.01 ? 0 : -0.01)}
+                          disabled={fechado || extratoVazio}
+                          className={`px-2 py-1 text-[11px] font-bold transition-colors disabled:opacity-30 ${
+                            ajuste === -0.01 ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-400 hover:bg-slate-50'
+                          }`}
+                          title="Rendimento truncado pelo BB: reduz 1 centavo"
+                        >
+                          -0,01
+                        </button>
+                        <button
+                          onClick={() => updateRecon(acc.id, 'ajuste_arredondamento', ajuste === 0.01 ? 0 : 0.01)}
+                          disabled={fechado || extratoVazio}
+                          className={`px-2 py-1 text-[11px] font-bold border-l border-slate-200 transition-colors disabled:opacity-30 ${
+                            ajuste === 0.01 ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-400 hover:bg-slate-50'
+                          }`}
+                          title="Rendimento truncado pelo BB: soma 1 centavo"
+                        >
+                          +0,01
+                        </button>
+                      </div>
                     </td>
                     <td className={`px-4 py-2.5 text-right font-semibold ${pend < 0 ? 'text-red-700' : pend > 0 ? 'text-blue-700' : 'text-slate-400'}`}>
                       {formatCurrency(pend)}
@@ -547,7 +577,14 @@ export default function Conciliacao() {
                           </span>
                         </div>
                       ) : (
-                        <Badge color="green">Conciliado</Badge>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Badge color="green">Conciliado</Badge>
+                          {ajuste !== 0 && (
+                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">
+                              Ajuste BB de {formatCurrency(ajuste)} aplicado
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
