@@ -61,7 +61,16 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
 
   const totalEntradas = toNumber(sumDecimal(transactions.filter(t => t.tipo_movimento === 'entrada').map(t => t.valor)));
   const totalSaidas = toNumber(sumDecimal(transactions.filter(t => t.tipo_movimento === 'saida').map(t => t.valor)));
-  const saldoTotal = accounts.reduce((acc, a) => acc + (a.saldo_inicial || 0), 0);
+
+  // Saldo corrente de cada conta = saldo_final da última transação no BT atual (abertura "Saldo Anterior" como fallback)
+  const saldoCorrentePorConta = new Map<string, number>(
+    accounts.map(acc => {
+      const txsAcc = transactions.filter(t => t.account_id === acc.id);
+      if (txsAcc.length > 0) return [acc.id, txsAcc[txsAcc.length - 1].saldo_final];
+      return [acc.id, acc.saldo_inicial];
+    })
+  );
+  const saldoTotal = accounts.reduce((acc, a) => acc + (saldoCorrentePorConta.get(a.id) ?? a.saldo_inicial), 0);
 
   const stats = [
     { label: 'Saldo Total das Contas', value: formatCurrency(saldoTotal), icon: Wallet, color: 'blue' },
@@ -154,7 +163,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
                     <p className="text-xs text-slate-400">{acc.codigo}</p>
                   </div>
                 </div>
-                <span className="text-sm font-semibold text-slate-600">{formatCurrency(acc.saldo_inicial)}</span>
+                <span className="text-sm font-semibold text-slate-600">{formatCurrency(saldoCorrentePorConta.get(acc.id) ?? acc.saldo_inicial)}</span>
               </div>
             ))}
           </div>

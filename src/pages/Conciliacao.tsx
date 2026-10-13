@@ -175,9 +175,12 @@ export default function Conciliacao() {
     const { error } = await supabase
       .from('pendency_resolutions')
       .insert({ kind, ref_id: refId, bt_report_id: currentBt.id });
-    if (!error) {
-      setResolutions([...resolutions, { kind, ref_id: refId, bt_report_id: currentBt.id, id: crypto.randomUUID(), created_at: new Date().toISOString() }]);
-    }
+    if (error) return;
+    // Grava a baixa também no registro original para manter a camada de dados coerente
+    const statusMap = { cheque: 'compensado', deposito: 'realizado', pagamento: 'pago' } as const;
+    const tableMap = { cheque: 'cheques', deposito: 'deposits_pending', pagamento: 'payments_pending' } as const;
+    await supabase.from(tableMap[kind]).update({ status: statusMap[kind] }).eq('id', refId);
+    setResolutions([...resolutions, { kind, ref_id: refId, bt_report_id: currentBt.id, id: crypto.randomUUID(), created_at: new Date().toISOString() }]);
   };
 
   // Pendências por conta: (+ cheques a compensar + pagamentos pendentes - depósitos pendentes)
