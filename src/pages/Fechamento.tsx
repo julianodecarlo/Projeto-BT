@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
-import type { Transaction, Reconciliation, RevenueOwn, Cheque, DepositPending, BtReport } from '@/types';
+import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport } from '@/types';
 
 interface ValidationCheck {
   label: string;
@@ -22,9 +22,8 @@ interface PendingItem {
 type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
 
 export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey) => void }) {
-  const { currentBt, accounts, refreshBt, cascadeRecalculate } = useBt();
+  const { currentBt, accounts, reconciliations, refreshReconciliations, refreshBt, cascadeRecalculate } = useBt();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
   const [revenues, setRevenues] = useState<RevenueOwn[]>([]);
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
@@ -38,15 +37,13 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [txRes, reconRes, revRes, cqRes, dpRes] = await Promise.all([
+    const [txRes, revRes, cqRes, dpRes] = await Promise.all([
       supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id),
-      supabase.from('reconciliation').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('revenue_own').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('cheques').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('deposits_pending').select('*').eq('bt_report_id', currentBt.id),
     ]);
     if (txRes.data) setTransactions(txRes.data as Transaction[]);
-    if (reconRes.data) setReconciliations(reconRes.data as Reconciliation[]);
     if (revRes.data) setRevenues(revRes.data as RevenueOwn[]);
     if (cqRes.data) setCheques(cqRes.data as Cheque[]);
     if (dpRes.data) setDeposits(dpRes.data as DepositPending[]);

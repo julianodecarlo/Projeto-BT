@@ -78,7 +78,7 @@ function MoneyInput({ value, onValueChange, className, placeholder, onKeyDown }:
 }
 
 export default function Conciliacao() {
-  const { currentBt, accounts } = useBt();
+  const { currentBt, accounts, refreshReconciliations } = useBt();
   const fechado = currentBt?.status === 'fechado';
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
@@ -321,6 +321,7 @@ export default function Conciliacao() {
         .single();
       if (!error && data) {
         setReconciliations(reconciliations.map(r => r.id === existing.id ? data as Reconciliation : r));
+        await refreshReconciliations();
       }
     } else {
       const { data, error } = await supabase
@@ -339,6 +340,7 @@ export default function Conciliacao() {
         .single();
       if (!error && data) {
         setReconciliations([...reconciliations, data as Reconciliation]);
+        await refreshReconciliations();
       }
     }
   };

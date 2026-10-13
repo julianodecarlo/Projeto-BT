@@ -3,12 +3,14 @@ import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
-import type { BtReport, Account } from '@/types';
+import type { BtReport, Account, Reconciliation } from '@/types';
 import Decimal from 'decimal.js';
 
 interface BtContextValue {
   currentBt: BtReport | null;
   accounts: Account[];
+  reconciliations: Reconciliation[];
+  refreshReconciliations: () => Promise<void>;
   loading: boolean;
   setCurrentBt: (bt: BtReport | null) => void;
   refreshAccounts: () => Promise<void>;
@@ -51,6 +53,7 @@ const storeBt = (bt: BtReport | null) => {
 export function BtProvider({ children }: { children: ReactNode }) {
   const [currentBt, setCurrentBtState] = useState<BtReport | null>(loadStoredBt);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
   const [loading, setLoading] = useState(true);
 
   const setCurrentBt = useCallback((bt: BtReport | null) => {
@@ -80,6 +83,23 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (data) setCurrentBt(data as BtReport);
   }, [currentBt]);
 
+  // Fonte única das conciliações do BT ativo: o Fechamento escuta este estado
+  // e reavalia as validações em tempo real quando uma conta é conciliada.
+  const refreshReconciliations = useCallback(async () => {
+    if (!currentBt) {
+      setReconciliations([]);
+      return;
+    }
+    const { data } = await supabase
+      .from('reconciliation')
+      .select('*')
+      .eq('bt_report_id', currentBt.id);
+    setReconciliations((data || []) as Reconciliation[]);
+  }, [currentBt]);
+
+  useEffect(() => {
+    refreshReconciliations();
+  }, [refreshReconciliations]);
   const createBt = useCallback(async (numero: string, data: string, dataFim?: string | null): Promise<BtReport | null> => {
     const { data: btData, error } = await supabase
       .from('bt_reports')
@@ -212,8 +232,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, [fetchAccounts]);
 
   return (
-    <BtContext.Provider value={{ currentBt, accounts, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate }}>
+    <BtContext.Provider value={{ currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate }}>
       {children}
     </BtContext.Provider>
-  );
-}
+  );}

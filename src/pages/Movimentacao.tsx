@@ -131,15 +131,11 @@ export default function Movimentacao() {
     }));
   };
 
+  // Idempotente: uma única linha por conta × coluna orçamentária no BT.
+  // Salvar 1, 5 ou 10 vezes produz sempre o mesmo estado no banco (UPSERT).
   const handleSave = async () => {
     if (!currentBt) return;
-    // Remove apenas as linhas das colunas orçamentárias; aberturas e transferências permanecem
-    await supabase
-      .from('transactions')
-      .delete()
-      .eq('bt_report_id', currentBt.id)
-      .not('tipo_orcamento', 'is', null);
-
+    const existingBudget = transactions.filter(t => t.tipo_orcamento != null);
     const maxOrdem = transactions.length > 0 ? Math.max(...transactions.map(t => t.ordem ?? 0)) : 0;
     let ordem = maxOrdem + 1;
     const saldoAnteriorMap: Record<string, number> = {};
@@ -147,19 +143,35 @@ export default function Movimentacao() {
       saldoAnteriorMap[acc.id] = getAccountSaldoAnterior(acc.id);
     }
 
-    for (const acc of accounts.filter(a => a.ativo)) {
+    const activeAccs = accounts.filter(a => a.ativo);
+    const entries: { field: keyof RowInput; tipo: BudgetType; desc: string }[] = [
+      { field: 'vigente', tipo: 'vigente', desc: 'Orçamento Vigente' },
+      { field: 'restos_pagar', tipo: 'restos_pagar', desc: 'Restos a Pagar' },
+      { field: 'diversos_credores', tipo: 'diversos_credores', desc: 'Diversos Credores' },
+    ];
+
+    for (const acc of activeAccs) {
       const row = inputs[acc.id];
       if (!row) continue;
-      const entries: { field: keyof RowInput; tipo: BudgetType; desc: string }[] = [
-        { field: 'vigente', tipo: 'vigente', desc: 'Orçamento Vigente' },
-        { field: 'restos_pagar', tipo: 'restos_pagar', desc: 'Restos a Pagar' },
-        { field: 'diversos_credores', tipo: 'diversos_credores', desc: 'Diversos Credores' },
-      ];
-
       for (const entry of entries) {
+        const existing = existingBudget.find(t => t.account_id === acc.id && t.tipo_orcamento === entry.tipo);
         const val = row[entry.field];
-        if (val && parseFloat(val) > 0) {
-          const v = toDecimal(val);
+        const v = val && parseFloat(val) > 0 ? toDecimal(val).toNumber() : 0;
+
+        if (v === 0) {
+          // Campo esvaziado: remove a linha antiga (se existir)
+          if (existing) {
+            await supabase.from('transactions').delete().eq('id', existing.id);
+          }
+          continue;
+        }
+
+        if (existing) {
+          if (existing.valor !== v) {
+            await supabase.from('transactions').update({ valor: v }).eq('id', existing.id);
+          }
+          saldoAnteriorMap[acc.id] = existing.saldo_final;
+        } else {
           const saldoAnt = saldoAnteriorMap[acc.id];
           const saldoFin = toDecimal(saldoAnt).minus(v).toNumber();
           await supabase.from('transactions').insert({
@@ -168,7 +180,7 @@ export default function Movimentacao() {
             descricao: entry.desc,
             tipo_orcamento: entry.tipo,
             tipo_movimento: 'saida',
-            valor: v.toNumber(),
+            valor: v,
             saldo_anterior: saldoAnt,
             saldo_final: saldoFin,
             data_lancamento: currentBt.data,
