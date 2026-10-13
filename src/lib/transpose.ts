@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getSaldoAbertura, getBtAnterior } from './recalc';
 import type { Account, BtReport, Convenio } from '@/types';
 
 /*
@@ -18,9 +19,7 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
 
   // ---- Contas bancárias: cria transação "Saldo Anterior" com o saldo carregado
   for (const acc of accounts) {
-    const saldoInicial = previousBt
-      ? await getSaldoFinalConta(previousBt, acc)
-      : acc.saldo_inicial;
+    const saldoInicial = await getSaldoAbertura(newBt, acc);
 
     await supabase.from('transactions').insert({
       bt_report_id: newBt.id,
@@ -74,13 +73,9 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
 }
 
 async function getPreviousBt(bt: BtReport): Promise<BtReport | null> {
-  const { data } = await supabase
-    .from('bt_reports')
-    .select('*')
-    .lt('data', bt.data)
-    .order('data', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const prev = await getBtAnterior(bt);
+  if (!prev) return null;
+  const { data } = await supabase.from('bt_reports').select('*').eq('id', prev.id).maybeSingle();
   return (data as BtReport) || null;
 }
 
@@ -97,31 +92,6 @@ async function fetchConvenios(): Promise<Convenio[]> {
 async function fetchSubalinhas(): Promise<{ codigo: string; descricao: string }[]> {
   const { data } = await supabase.from('subalinhas').select('codigo, descricao').eq('ativo', true).order('ordem');
   return (data as { codigo: string; descricao: string }[]) || [];
-}
-
-async function getSaldoFinalConta(bt: BtReport, acc: Account): Promise<number> {
-  // Última transação da conta no BT anterior carrega o saldo final
-  const { data } = await supabase
-    .from('transactions')
-    .select('saldo_final')
-    .eq('bt_report_id', bt.id)
-    .eq('account_id', acc.id)
-    .order('ordem', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (data) return (data as { saldo_final: number }).saldo_final;
-
-  // Sem movimentações no BT anterior: o saldo "final" é o saldo anterior carregado
-  const { data: abertura } = await supabase
-    .from('transactions')
-    .select('saldo_anterior')
-    .eq('bt_report_id', bt.id)
-    .eq('account_id', acc.id)
-    .eq('descricao', 'Saldo Anterior')
-    .maybeSingle();
-  if (abertura) return (abertura as { saldo_anterior: number }).saldo_anterior;
-
-  return acc.saldo_inicial;
 }
 
 async function getSaldoFinalReceita(bt: BtReport, subalinea: string, tipo: 'contabil' | 'financeira'): Promise<number> {

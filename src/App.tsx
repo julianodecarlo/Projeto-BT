@@ -64,7 +64,7 @@ function AppContent() {
           {page === 'convenios' && <Convenios />}
           {page === 'receita' && <Receita />}
           {page === 'conciliacao' && <Conciliacao />}
-          {page === 'fechamento' && <Fechamento />}
+          {page === 'fechamento' && <Fechamento onNavigate={setPage} />}
           {page === 'relatorios' && <Relatorios onNavigate={setPage} />}
         </main>
       </div>

@@ -131,34 +131,9 @@ export function BtProvider({ children }: { children: ReactNode }) {
     const { data: accs } = await supabase.from('accounts').select('*').order('ordem');
     if (!accs) return;
 
-    for (const acc of accs as Account[]) {
-      let runningBalance = new Decimal(acc.saldo_inicial || 0);
-
-      for (const bt of subsequentBts as BtReport[]) {
-        const { data: txs } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('bt_report_id', bt.id)
-          .eq('account_id', acc.id)
-          .order('ordem', { ascending: true });
-
-        if (!txs || txs.length === 0) continue;
-
-        for (const tx of txs) {
-          const saldoAnterior = runningBalance;
-          const v = new Decimal(tx.valor || 0);
-          const saldoFinal = tx.tipo_movimento === 'entrada'
-            ? saldoAnterior.plus(v)
-            : saldoAnterior.minus(v);
-
-          await supabase.from('transactions').update({
-            saldo_anterior: saldoAnterior.toNumber(),
-            saldo_final: saldoFinal.toNumber(),
-          }).eq('id', tx.id);
-
-          runningBalance = saldoFinal;
-        }
-      }
+    // Recalcula cada BT da cadeia com abertura = saldo final do BT anterior
+    for (const bt of subsequentBts as BtReport[]) {
+      await forceRecalcBtSaldos(bt, accs as Account[]);
     }
   }, []);
 
@@ -225,7 +200,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
           // Re-sincronização forçada: recalcula do zero e sobrescreve os saldos
           // salvos no banco para todas as contas do BT ativo antes de qualquer aba renderizar
           const { data: accs } = await supabase.from('accounts').select('*');
-          await forceRecalcBtSaldos(lastBt.id, (accs || []) as Account[]);
+          await forceRecalcBtSaldos(lastBt as BtReport, (accs || []) as Account[]);
           setCurrentBt(lastBt as BtReport);
         }
       } catch (err) {

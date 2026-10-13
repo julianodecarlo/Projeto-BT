@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck } from 'lucide-react';
+import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck, ArrowRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
@@ -12,7 +12,16 @@ interface ValidationCheck {
   detail: string;
 }
 
-export default function Fechamento() {
+interface PendingItem {
+  location: string;
+  message: string;
+  goTo: PageKey;
+  goToLabel: string;
+}
+
+type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
+
+export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey) => void }) {
   const { currentBt, accounts, refreshBt, cascadeRecalculate } = useBt();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
@@ -156,6 +165,63 @@ export default function Fechamento() {
   const allPassed = checks.every(c => c.passed);
   const isFechado = currentBt.status === 'fechado';
 
+  // Lista detalhada de pendências com localização e atalho de navegação
+  const pendingItems: PendingItem[] = [];
+  for (const r of divergentRecon) {
+    const acc = accounts.find(a => a.id === r.account_id);
+    const dif = toDecimal(r.saldo_conciliado).minus(toDecimal(r.saldo_orcamentario)).toNumber();
+    pendingItems.push({
+      location: `Conciliação Bancária - Conta ${acc?.nome ?? '—'}`,
+      message: `Saldo com divergência de ${formatCurrency(dif)} entre Extrato e BT.`,
+      goTo: 'conciliacao',
+      goToLabel: 'Ir para Conciliação',
+    });
+  }
+  for (const a of accountsWithoutRecon) {
+    pendingItems.push({
+      location: `Conciliação Bancária - Conta ${a.nome}`,
+      message: 'Conta com movimento no BT sem conciliação registrada.',
+      goTo: 'conciliacao',
+      goToLabel: 'Ir para Conciliação',
+    });
+  }
+  if (!balanceOk) {
+    pendingItems.push({
+      location: 'Movimentações',
+      message: 'Há inconsistência nos saldos corridos (saldo anterior + entrada − saída ≠ saldo final).',
+      goTo: 'movimentacao',
+      goToLabel: 'Ir para Movimentações',
+    });
+  }
+  if (transactions.length === 0) {
+    pendingItems.push({
+      location: 'Movimentações',
+      message: 'Nenhuma movimentação registrada no BT.',
+      goTo: 'movimentacao',
+      goToLabel: 'Ir para Movimentações',
+    });
+  }
+  if (!hasContabil || !hasFinanceira) {
+    pendingItems.push({
+      location: 'Controle da Receita',
+      message: !hasContabil && !hasFinanceira
+        ? 'Nenhuma receita própria registrada (contábil e financeira).'
+        : !hasContabil
+          ? 'Receitas Próprias Contábil não preenchidas.'
+          : 'Receitas Próprias Financeira não preenchidas.',
+      goTo: 'receita',
+      goToLabel: 'Ir para Controle da Receita',
+    });
+  }
+  if (elaboradoPor.trim() === '' || conferidoPor.trim() === '') {
+    pendingItems.push({
+      location: 'Fechamento Diário',
+      message: 'Assinaturas de elaboração e/ou conferência não preenchidas.',
+      goTo: 'fechamento',
+      goToLabel: 'Preencher abaixo',
+    });
+  }
+
   const handleSaveSignatures = async () => {
     if (!currentBt) return;
     await supabase
@@ -231,7 +297,7 @@ export default function Fechamento() {
         )}
         <div className="flex-1">
           <p className="text-sm font-bold text-slate-800">
-            {isFechado ? 'BT Fechado' : allPassed ? 'Pronto para fechamento' : 'Pendências detectadas'}
+            {isFechado ? 'BT Fechado' : allPassed ? 'Pronto para fechamento' : `Pendências detectadas (${pendingItems.length})`}
           </p>
           <p className="text-xs text-slate-600 mt-0.5">
             {isFechado
@@ -248,6 +314,27 @@ export default function Fechamento() {
           </Button>
         )}
       </div>
+
+      {/* Lista detalhada de pendências com atalhos */}
+      {!isFechado && pendingItems.length > 0 && (
+        <Card className="p-5 border-amber-200">
+          <h3 className="text-sm font-bold text-slate-800 mb-3">Onde estão as pendências</h3>
+          <ul className="space-y-2">
+            {pendingItems.map((item, i) => (
+              <li key={i} className="flex items-start gap-3 py-2 border-b border-slate-50 last:border-0">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-700">[{item.location}]</p>
+                  <p className="text-xs text-slate-500">{item.message}</p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => onNavigate?.(item.goTo)} className="!py-1 !px-2 !text-[11px] flex-shrink-0">
+                  {item.goToLabel} <ArrowRight className="w-3 h-3" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* Signatures blocked indicator */}
       {isFechado && (
