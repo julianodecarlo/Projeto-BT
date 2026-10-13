@@ -20,8 +20,8 @@ export function BtFechadoGuard({ fechado, children }: BtFechadoGuardProps) {
 export function BtFechadoBanner({ numero }: { numero: string }) {
   return (
     <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-lg text-sm font-medium shadow-sm">
-      <Lock className="w-4 h-4" />
-      BT {numero} está Fechado — edição bloqueada em todas as abas. Reabra no Fechamento Diário para editar.
+      <Lock className="w-4 h-4 flex-shrink-0" />
+      BT {numero} está Fechado — Modo Somente Leitura. Consulta e auditoria liberadas; reabra no Fechamento Diário para editar.
     </div>
   );
 }
