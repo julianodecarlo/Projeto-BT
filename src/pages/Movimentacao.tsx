@@ -57,6 +57,7 @@ export default function Movimentacao() {
     }
     for (const tx of txs) {
       if (tx.descricao === 'Saldo Anterior') continue;
+      if (tx.tipo != null) continue; // repasses/transferências aparecem apenas na coluna própria
       if (!state[tx.account_id]) state[tx.account_id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
       const key = tx.tipo_orcamento || 'vigente';
       if (key in state[tx.account_id]) {

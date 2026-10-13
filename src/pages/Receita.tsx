@@ -118,7 +118,7 @@ export default function Receita() {
     const saldoFinCont = saldoAnt.plus(arrec);
     const caixa = revTipo === 'financeira' ? toDecimal(revCaixa || 0) : new Decimal(0);
     const bancos = revTipo === 'financeira' ? toDecimal(revBancos || 0) : new Decimal(0);
-    const saldoFinFisc = revTipo === 'financeira' ? caixa.plus(bancos) : new Decimal(0);
+    const saldoFinFisc = revTipo === 'financeira' ? saldoAnt.plus(caixa).plus(bancos) : new Decimal(0);
     const maxOrdem = revenues.length > 0 ? Math.max(...revenues.map(r => r.ordem)) : 0;
 
     // Linha de abertura criada pela transposição: atualiza em vez de duplicar
@@ -195,7 +195,7 @@ export default function Receita() {
     }
     const caixa = toDecimal(getCell(r, 'caixa') || 0);
     const bancos = toDecimal(getCell(r, 'bancos') || 0);
-    return { ...r, caixa: caixa.toNumber(), bancos: bancos.toNumber(), saldo_final_financeiro: caixa.plus(bancos).toNumber() };
+    return { ...r, caixa: caixa.toNumber(), bancos: bancos.toNumber(), saldo_final_financeiro: toDecimal(r.saldo_anterior).plus(caixa).plus(bancos).toNumber() };
   };
 
   const commitCell = async (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => {

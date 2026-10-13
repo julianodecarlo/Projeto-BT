@@ -532,7 +532,12 @@ export default function Conciliacao() {
                       {extratoVazio ? (
                         <Badge color="slate">Pendente</Badge>
                       ) : divergente ? (
-                        <Badge color="red">Divergente</Badge>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Badge color="red">Divergente</Badge>
+                          <span className="text-[11px] font-semibold text-red-700">
+                            Dif: {formatCurrency(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).toNumber())}
+                          </span>
+                        </div>
                       ) : (
                         <Badge color="green">Conciliado</Badge>
                       )}
