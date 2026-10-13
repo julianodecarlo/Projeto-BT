@@ -10,14 +10,13 @@ interface MoneyInputProps {
   inputRef?: (el: HTMLInputElement | null) => void;
 }
 
-// Converte dígitos crus em texto BRL: "123456" -> "1.234,56"
+const numberFormat = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Converte dígitos crus (centavos) em texto BRL: "123456" -> "1.234,56"
 const format = (digits: string, neg: boolean): string => {
   if (!digits) return '';
-  const cents = parseInt(digits, 10);
-  const intPart = Math.floor(cents / 100).toString();
-  const decPart = (cents % 100).toString().padStart(2, '0');
-  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\\d))/g, '.');
-  return `${neg ? '-' : ''}${intFormatted},${decPart}`;
+  const value = Number(digits) / 100;
+  return `${neg ? '-' : ''}${numberFormat.format(value)}`;
 };
 
 const isNegative = (v: number | null | undefined): boolean => v != null && v < 0;
