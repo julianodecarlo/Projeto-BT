@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from './format';
-import type { BtReport, Account, Transaction, RevenueOwn, Cheque, DepositPending, Reconciliation } from '@/types';
+import { getOpenItems } from './reconStatus';
+import type { BtReport, Account, Transaction, RevenueOwn, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
 
 interface PdfData {
   bt: BtReport;
@@ -9,26 +10,45 @@ interface PdfData {
   revenues: RevenueOwn[];
   cheques: Cheque[];
   deposits: DepositPending[];
+  payments: PaymentPending[];
   reconciliations: Reconciliation[];
 }
 
 export async function fetchPdfData(btId: string): Promise<PdfData | null> {
   const { data: bt } = await supabase.from('bt_reports').select('*').eq('id', btId).maybeSingle();
   if (!bt) return null;
-  const { data: accounts } = await supabase.from('accounts').select('*').order('ordem');
-  const { data: transactions } = await supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem');
-  const { data: revenues } = await supabase.from('revenue_own').select('*').eq('bt_report_id', btId).order('ordem');
-  const { data: cheques } = await supabase.from('cheques').select('*').eq('bt_report_id', btId).order('data_emissao');
-  const { data: deposits } = await supabase.from('deposits_pending').select('*').eq('bt_report_id', btId);
-  const { data: reconciliations } = await supabase.from('reconciliation').select('*').eq('bt_report_id', btId);
+  const [accountsRes, txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes, reconRes] = await Promise.all([
+    supabase.from('accounts').select('*').order('ordem'),
+    supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem'),
+    supabase.from('revenue_own').select('*').eq('bt_report_id', btId).order('ordem'),
+    supabase.from('cheques').select('*'),
+    supabase.from('deposits_pending').select('*'),
+    supabase.from('payments_pending').select('*'),
+    supabase.from('pendency_resolutions').select('*'),
+    supabase.from('bt_reports').select('id, data'),
+    supabase.from('reconciliation').select('*').eq('bt_report_id', btId),
+  ]);
+  // Mesma FOTO ESTÁTICA POR BT da aba Conciliação: pendências criadas até o BT
+  // e não baixadas em/antes dele.
+  const openItems = getOpenItems(
+    {
+      cheques: (cqRes.data || []) as Cheque[],
+      deposits: (dpRes.data || []) as DepositPending[],
+      payments: (payRes.data || []) as PaymentPending[],
+      resolutions: (resRes.data || []) as PendencyResolution[],
+    },
+    { id: bt.id, data: bt.data },
+    (btsRes.data || []) as Pick<BtReport, 'id' | 'data'>[]
+  );
   return {
     bt: bt as BtReport,
-    accounts: (accounts || []) as Account[],
-    transactions: (transactions || []) as Transaction[],
-    revenues: (revenues || []) as RevenueOwn[],
-    cheques: (cheques || []) as Cheque[],
-    deposits: (deposits || []) as DepositPending[],
-    reconciliations: (reconciliations || []) as Reconciliation[],
+    accounts: (accountsRes.data || []) as Account[],
+    transactions: (txRes.data || []) as Transaction[],
+    revenues: (revRes.data || []) as RevenueOwn[],
+    cheques: openItems.cheques,
+    deposits: openItems.deposits,
+    payments: openItems.payments,
+    reconciliations: (reconRes.data || []) as Reconciliation[],
   };
 }
 
@@ -105,29 +125,30 @@ export function generatePdfHtml(data: PdfData): string {
     `;
   }).join('');
 
-  // Cheques table - agrupados por conta de origem
+  // Cheques a Compensar — mesma estrutura da aba Conciliação: agrupados por
+  // conta corrente, com colunas completas e total por grupo.
   const chequeGroups = activeAccounts
     .map(acc => ({ acc, rows: cheques.filter(c => c.account_id === acc.id) }))
     .filter(g => g.rows.length > 0)
     .map(g => `
       <tr>
         <td colspan="6" style="padding:6px 10px;background:#f8fafc;font-weight:700;font-size:11px;color:#334155;text-transform:uppercase;letter-spacing:0.5px;">
-          Conta: ${g.acc.nome}${g.acc.codigo ? ` (${g.acc.codigo})` : ''} — ${g.rows.length} cheque(s)
+          Conta: ${g.acc.nome}${g.acc.codigo ? ` (${g.acc.codigo})` : ''} — ${g.rows.length} cheque(s) — Total: ${formatCurrency(toNumber(sumDecimal(g.rows.map(c => c.valor))))}
         </td>
       </tr>
       ${g.rows.map(c => `
         <tr>
-          <td style="padding:6px 10px 6px 22px;border-bottom:1px solid #f1f5f9;">${c.numero}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${g.acc.nome}</td>
+          <td style="padding:6px 10px 6px 10px;border-bottom:1px solid #f1f5f9;">${c.numero}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${c.beneficiario}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${formatDate(c.data_emissao)}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(c.valor)}</td>
-          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">${c.status === 'compensado' ? 'Compensado' : 'A Compensar'}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">A Compensar</td>
         </tr>
       `).join('')}
     `).join('');
   const chequeRows = cheques.length === 0
-    ? '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8;">Nenhum cheque emitido</td></tr>'
+    ? '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8;">Nenhum cheque a compensar</td></tr>'
     : chequeGroups;
 
   // Deposits table
@@ -259,7 +280,7 @@ export function generatePdfHtml(data: PdfData): string {
   </div>
 
   <div class="section">
-    <div class="section-title">Cheques Emitidos</div>
+    <div class="section-title">Cheques a Compensar</div>
     <table>
       <thead>
         <tr>

@@ -347,7 +347,15 @@ export default function Movimentacao() {
   };
 
   const handleSaveLivre = async () => {
-    if (!currentBt || !livreOrigem || !livreDestino || !livreValor || livreValor === 0) return;
+    if (!currentBt) return;
+    if (!livreOrigem || !livreDestino) {
+      setTransferError('Selecione a conta de origem e a conta de destino.');
+      return;
+    }
+    if (!livreValor || livreValor === 0) {
+      setTransferError('Informe um valor diferente de zero.');
+      return;
+    }
     if (livreOrigem === livreDestino) {
       setTransferError('A conta origem e a conta destino devem ser diferentes.');
       return;
@@ -784,11 +792,13 @@ export default function Movimentacao() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="Conta Origem">
               <Select value={livreOrigem} onChange={(e) => setLivreOrigem(e.target.value)}>
+                <option value="">Selecione...</option>
                 {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
               </Select>
             </Field>
             <Field label="Conta Destino">
               <Select value={livreDestino} onChange={(e) => setLivreDestino(e.target.value)}>
+                <option value="">Selecione...</option>
                 {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
               </Select>
             </Field>

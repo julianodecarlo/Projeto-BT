@@ -84,14 +84,37 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     fetchBtAnterior();
   }, [fetchBtAnterior]);
 
-  // Importa automaticamente Nome e Cargo do BT anterior quando os campos do BT atual estão vazios
+  // Herança automática: ao abrir um BT novo com campos vazios, importa do BT
+  // anterior e já grava no banco — o fechamento não exige reabrir o modal e
+  // salvar quando os dados herdados estão completos.
   const handleImportSignatures = () => {
-    if (!btAnterior) return;
-    if (!elaboradoPor.trim()) setElaboradoPor(btAnterior.elaborado_por || '');
-    if (!cargoElaborado.trim()) setCargoElaborado(btAnterior.cargo_elaborado || '');
-    if (!conferidoPor.trim()) setConferidoPor(btAnterior.conferido_por || '');
-    if (!cargoConferido.trim()) setCargoConferido(btAnterior.cargo_conferido || '');
+    if (!btAnterior || !currentBt) return;
+    const next = {
+      elaborado: !elaboradoPor.trim() ? (btAnterior.elaborado_por || '') : elaboradoPor,
+      cargoElab: !cargoElaborado.trim() ? (btAnterior.cargo_elaborado || '') : cargoElaborado,
+      conferido: !conferidoPor.trim() ? (btAnterior.conferido_por || '') : conferidoPor,
+      cargoConf: !cargoConferido.trim() ? (btAnterior.cargo_conferido || '') : cargoConferido,
+    };
+    setElaboradoPor(next.elaborado);
+    setCargoElaborado(next.cargoElab);
+    setConferidoPor(next.conferido);
+    setCargoConferido(next.cargoConf);
+    supabase
+      .from('bt_reports')
+      .update({
+        elaborado_por: next.elaborado.trim() || null,
+        cargo_elaborado: next.cargoElab.trim() || null,
+        conferido_por: next.conferido.trim() || null,
+        cargo_conferido: next.cargoConf.trim() || null,
+      })
+      .eq('id', currentBt.id)
+      .then(() => refreshBt());
   };
+
+  useEffect(() => {
+    if (btAnterior) handleImportSignatures();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [btAnterior]);
 
   if (!currentBt) {
     return (
