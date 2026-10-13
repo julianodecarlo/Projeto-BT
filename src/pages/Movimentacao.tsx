@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
-import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
+import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Transaction, BudgetType } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
@@ -31,6 +31,7 @@ export default function Movimentacao() {
   const [transferError, setTransferError] = useState<string | null>(null);
   const [savingTransfer, setSavingTransfer] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<{ ids: string[]; origemId: string; destinoId: string; valor: number } | null>(null);
+  const [editingRepasse, setEditingRepasse] = useState<{ id: string; valor: number } | null>(null);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -175,6 +176,31 @@ export default function Movimentacao() {
     setTimeout(() => setSavedFlash(null), 3000);
   };
 
+  // Recria a cadeia saldo_anterior → saldo_final de uma conta após inserir, editar ou excluir lançamentos
+  const recalcAccountSaldos = async (accId: string) => {
+    if (!currentBt) return;
+    const { data: txs } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('bt_report_id', currentBt.id)
+      .eq('account_id', accId)
+      .order('ordem', { ascending: true });
+    if (!txs) return;
+    const rows = txs as Transaction[];
+    const opening = rows.find(t => t.descricao === 'Saldo Anterior');
+    let saldo = opening ? opening.saldo_anterior : (accounts.find(a => a.id === accId)?.saldo_inicial ?? 0);
+    for (const tx of rows) {
+      if (tx.descricao === 'Saldo Anterior') continue;
+      const fin = tx.tipo_movimento === 'entrada'
+        ? toDecimal(saldo).plus(toDecimal(tx.valor)).toNumber()
+        : toDecimal(saldo).minus(toDecimal(tx.valor)).toNumber();
+      if (tx.saldo_anterior !== saldo || tx.saldo_final !== fin) {
+        await supabase.from('transactions').update({ saldo_anterior: saldo, saldo_final: fin }).eq('id', tx.id);
+      }
+      saldo = fin;
+    }
+  };
+
   const insertTransfer = async (
     tipo: 'repasse_reitoria' | 'transf_livre',
     fromId: string | null,
@@ -252,7 +278,23 @@ export default function Movimentacao() {
     }
     setSavingTransfer(true);
     setTransferError(null);
+    if (editingRepasse) {
+      const { error } = await supabase.from('transactions').update({ valor: repasseValor }).eq('id', editingRepasse.id);
+      if (!error) await recalcAccountSaldos(tesouro.id);
+      setSavingTransfer(false);
+      if (!error) {
+        setEditingRepasse(null);
+        setRepasseValor(null);
+        setTransferFlash('Repasse atualizado.');
+        setTimeout(() => setTransferFlash(null), 3000);
+        fetchTransactions();
+      } else {
+        setTransferError('Não foi possível atualizar o repasse. Tente novamente.');
+      }
+      return;
+    }
     const ok = await insertTransfer('repasse_reitoria', null, tesouro.id, repasseValor, 'Repasse Financeiro da Reitoria');
+    if (ok) await recalcAccountSaldos(tesouro.id);
     setSavingTransfer(false);
     if (ok) {
       setRepasseValor(null);
@@ -262,6 +304,22 @@ export default function Movimentacao() {
     } else {
       setTransferError('Não foi possível registrar o repasse. Tente novamente.');
     }
+  };
+
+  const startEditRepasse = (tx: Transaction) => {
+    setEditingRepasse({ id: tx.id, valor: tx.valor });
+    setRepasseValor(tx.valor);
+  };
+
+  const deleteRepasse = async (tx: Transaction) => {
+    const tesouro = accounts.find(a => a.nome.toLowerCase().includes('tesouro'));
+    await supabase.from('transactions').delete().eq('id', tx.id);
+    if (editingRepasse?.id === tx.id) {
+      setEditingRepasse(null);
+      setRepasseValor(null);
+    }
+    if (tesouro) await recalcAccountSaldos(tesouro.id);
+    fetchTransactions();
   };
 
   const handleSaveLivre = async () => {
@@ -289,6 +347,10 @@ export default function Movimentacao() {
       valor,
       `Transferência ${origem?.nome} → ${destino?.nome}`
     );
+    if (ok) {
+      await recalcAccountSaldos(fromId);
+      await recalcAccountSaldos(toId);
+    }
     setSavingTransfer(false);
     if (ok) {
       setLivreValor(null);
@@ -320,6 +382,8 @@ export default function Movimentacao() {
       setEditingTransfer(null);
       setLivreValor(null);
     }
+    await recalcAccountSaldos(p.saida.account_id);
+    if (p.entrada.account_id !== p.saida.account_id) await recalcAccountSaldos(p.entrada.account_id);
     fetchTransactions();
   };
 
@@ -349,6 +413,10 @@ export default function Movimentacao() {
       }))
       .filter(p => p.entrada != null) as { saida: Transaction; entrada: Transaction }[];
   }, [transactions]);
+
+  const repasses = useMemo(() =>
+    transactions.filter(t => t.tipo === 'repasse_reitoria' && t.tipo_movimento === 'entrada'),
+  [transactions]);
 
   if (!currentBt) {
     return (
@@ -509,10 +577,67 @@ export default function Movimentacao() {
             <MoneyInput value={repasseValor} onValueChange={setRepasseValor} className="w-full px-3 py-2 text-sm" />
           </Field>
           <div className="flex justify-end mt-4">
+            {editingRepasse && (
+              <Button size="sm" variant="ghost" onClick={() => { setEditingRepasse(null); setRepasseValor(null); }}>
+                <X className="w-4 h-4" /> Cancelar Edição
+              </Button>
+            )}
             <Button size="sm" onClick={handleSaveRepasse} disabled={savingTransfer || !repasseValor || repasseValor <= 0}>
-              {savingTransfer ? 'Registrando...' : 'Registrar Repasse'}
+              {savingTransfer ? 'Registrando...' : editingRepasse ? 'Atualizar Repasse' : 'Registrar Repasse'}
             </Button>
           </div>
+
+          {repasses.length > 0 && (
+            <div className="mt-5 border border-slate-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Repasses Registrados</h4>
+                <span className="text-xs font-bold text-emerald-700">Total: {formatCurrency(repasses.reduce((s, r) => s + r.valor, 0))}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
+                    <th className="px-3 py-2 text-left font-semibold">Data / Descrição</th>
+                    <th className="px-3 py-2 text-right font-semibold">Valor</th>
+                    <th className="px-3 py-2 text-center font-semibold">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repasses.map(r => (
+                    <tr
+                      key={r.id}
+                      className={`border-t border-slate-100 ${editingRepasse?.id === r.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className="px-3 py-2 text-slate-700">
+                        <span className="font-medium">{formatDate(r.data_lancamento)}</span>
+                        <span className="text-slate-500"> · {r.descricao}</span>
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatCurrency(r.valor)}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => startEditRepasse(r)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-40"
+                            title="Editar"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteRepasse(r)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
 
         <Card className="p-5">
