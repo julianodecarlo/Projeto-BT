@@ -625,7 +625,7 @@ export default function Conciliacao() {
               </div>
             </div>
           )}
-          <div className="p-3 space-y-3 max-h-96 overflow-y-auto">
+          <div className="p-3 space-y-3">
             {chequeGroups.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-4">Nenhum cheque a compensar</p>
             ) : (
@@ -666,7 +666,7 @@ export default function Conciliacao() {
               </div>
             </div>
           )}
-          <div className="p-3 space-y-3 max-h-96 overflow-y-auto">
+          <div className="p-3 space-y-3">
             {depositGroups.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-4">Nenhum depósito pendente</p>
             ) : (
@@ -738,7 +738,7 @@ export default function Conciliacao() {
             </div>
           </div>
         )}
-        <div className="p-3 space-y-3 max-h-96 overflow-y-auto">
+        <div className="p-3 space-y-3">
           {paymentGroups.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-4">Nenhum pagamento pendente</p>
           ) : (

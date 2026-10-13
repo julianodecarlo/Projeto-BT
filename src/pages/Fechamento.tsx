@@ -42,7 +42,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
     const [txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = await Promise.all([
-      supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id),
+      supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id).order('ordem', { ascending: true }),
       supabase.from('revenue_own').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('cheques').select('*'),
       supabase.from('deposits_pending').select('*'),
@@ -136,10 +136,21 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   );
   const pendMap = pendenciasPorConta(openItems);
 
+  // SALDO FINAL ORÇAMENTÁRIO da conta neste BT, calculado de forma independente
+  // de ordem (âncora "Saldo Anterior" + somatório de entradas − somatório de
+  // saídas). É contra este valor que a Conciliação compara o Saldo Extrato.
   const saldoOrcamentarioPorConta = (accId: string): number => {
+    const acc = accounts.find(a => a.id === accId);
     const accTxs = transactions.filter(t => t.account_id === accId);
-    if (accTxs.length === 0) return accounts.find(a => a.id === accId)?.saldo_inicial ?? 0;
-    return accTxs[accTxs.length - 1].saldo_final;
+    if (!acc || accTxs.length === 0) return acc?.saldo_inicial ?? 0;
+    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
+    let saldo = toDecimal(anchor ? anchor.saldo_anterior : acc.saldo_inicial);
+    for (const t of accTxs) {
+      if (t.descricao === 'Saldo Anterior') continue;
+      const v = toDecimal(t.valor);
+      saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
+    }
+    return saldo.toNumber();
   };
 
   const statusPorConta = accounts.filter(a => a.ativo).map(acc => ({
