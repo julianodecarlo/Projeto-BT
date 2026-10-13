@@ -5,7 +5,7 @@ import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
 import { getOpenItems, pendenciasPorConta, getReconStatus } from '@/lib/reconStatus';
-import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending } from '@/types';
+import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending, PendencyResolution } from '@/types';
 
 interface ValidationCheck {
   label: string;
@@ -29,6 +29,8 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
   const [payments, setPayments] = useState<PaymentPending[]>([]);
+  const [resolutions, setResolutions] = useState<PendencyResolution[]>([]);
+  const [allBts, setAllBts] = useState<Pick<BtReport, 'id' | 'data'>[]>([]);
   const [elaboradoPor, setElaboradoPor] = useState('');
   const [cargoElaborado, setCargoElaborado] = useState('');
   const [conferidoPor, setConferidoPor] = useState('');
@@ -39,18 +41,22 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [txRes, revRes, cqRes, dpRes, payRes] = await Promise.all([
+    const [txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = await Promise.all([
       supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('revenue_own').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('cheques').select('*'),
       supabase.from('deposits_pending').select('*'),
       supabase.from('payments_pending').select('*'),
+      supabase.from('pendency_resolutions').select('*'),
+      supabase.from('bt_reports').select('id, data'),
     ]);
     if (txRes.data) setTransactions(txRes.data as Transaction[]);
     if (revRes.data) setRevenues(revRes.data as RevenueOwn[]);
     if (cqRes.data) setCheques(cqRes.data as Cheque[]);
     if (dpRes.data) setDeposits(dpRes.data as DepositPending[]);
     if (payRes.data) setPayments(payRes.data as PaymentPending[]);
+    if (resRes.data) setResolutions(resRes.data as PendencyResolution[]);
+    if (btsRes.data) setAllBts(btsRes.data as Pick<BtReport, 'id' | 'data'>[]);
     setElaboradoPor(currentBt.elaborado_por || '');
     setCargoElaborado(currentBt.cargo_elaborado || '');
     setConferidoPor(currentBt.conferido_por || '');
@@ -120,10 +126,14 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const isContaConvenio = (accountId: string) =>
     accounts.find(a => a.id === accountId)?.categoria === 'convenio';
 
-  // Fórmula viva compartilhada com a Conciliação: avalia Extrato − Rendimentos −
-  // Dif.Arred.Rend − Pendências vs Saldo Orçamentário a cada render, respeitando
-  // o ajuste e as pendências reais — sem refazer o cálculo de forma isolada.
-  const openItems = getOpenItems(cheques, deposits, payments);
+  // FOTO ESTÁTICA POR BT: o Fechamento lê apenas as pendências da foto deste
+  // BT — criadas até ele e não baixadas em/antes dele. Conciliações e baixas
+  // gravadas por BTs futuros não alteram a foto deste período.
+  const openItems = getOpenItems(
+    { cheques, deposits, payments, resolutions },
+    { id: currentBt.id, data: currentBt.data },
+    allBts
+  );
   const pendMap = pendenciasPorConta(openItems);
 
   const saldoOrcamentarioPorConta = (accId: string): number => {

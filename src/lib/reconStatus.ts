@@ -1,9 +1,16 @@
-import type { Cheque, DepositPending, PaymentPending, Reconciliation } from '@/types';
+import type { BtReport, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
 
 // Fonte única de verdade do status de conciliação.
 // Conciliação Bancária e Fechamento Diário avaliam com esta MESMA fórmula ao vivo
-// (Extrato − Rendimentos − Dif.Arred.Rend − Pendências vs Saldo Orçamentário),
-// eliminando avisos fantasmas causados por flags gravadas desatualizadas.
+// (Extrato − Rendimentos − Dif.Arred.Rend − Pendências vs Saldo Orçamentário).
+//
+// PADRÃO DE FOTOGRAFIA ESTÁTICA (SNAPSHOT POR BT):
+// Cada BT enxerga as pendências conforme a foto gravada no SEU período:
+//   - Entram no cômputo as pendências CRIADAS até o BT (criação <= data do BT);
+//   - Saem do cômputo as baixadas EM OU ANTES do BT (baixa <= data do BT).
+// Uma baixa dada em um BT futuro nunca altera a foto de BTs anteriores:
+//   o cheque que estava 'A Compensar' no BT 170 continua 'A Compensar' na
+//   foto do 170, mesmo tendo sido compensado durante o BT 171.
 
 export interface OpenItems {
   cheques: Cheque[];
@@ -11,19 +18,41 @@ export interface OpenItems {
   payments: PaymentPending[];
 }
 
-// Pendências abertas = registros SEM baixa permanente no banco de dados.
-// A baixa é gravada no registro original (status do cheque/depósito/pagamento)
-// e vale para TODOS os BTs: um item compensado/pago/realizado nunca mais
-// reaparece, nem em BTs futuros nem ao reabrir BTs anteriores.
+export interface SnapshotSource {
+  cheques: Cheque[];
+  deposits: DepositPending[];
+  payments: PaymentPending[];
+  resolutions: PendencyResolution[];
+}
+
+// Foto estática das pendências para um dado BT. `bts` traz id e data de
+// todos os BTs (incluindo o atual) para posicionar criações e baixas na linha
+// do tempo. Sem a linha do tempo, cai no comportamento de visão global.
 export function getOpenItems(
-  cheques: Cheque[],
-  deposits: DepositPending[],
-  payments: PaymentPending[]
+  src: SnapshotSource,
+  bt: Pick<BtReport, 'id' | 'data'>,
+  bts: Pick<BtReport, 'id' | 'data'>[]
 ): OpenItems {
+  const dataById = new Map(bts.map(b => [b.id, b.data]));
+  const btData = dataById.get(bt.id) ?? bt.data;
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+  // Baixa é válida para a foto do BT se foi dada em um BT cuja data <= data do BT atual.
+  const baixadoAte = (refId: string, kind: PendencyResolution['kind']) =>
+    src.resolutions.some(
+      r => r.kind === kind && r.ref_id === refId && cmp(dataById.get(r.bt_report_id) ?? '9999-12-31', btData) <= 0
+    );
+
+  const foiCriadoAte = (btReportId: string | null) => {
+    if (!btReportId) return true; // registro antigo sem vínculo de BT: mantém visibilidade global
+    const d = dataById.get(btReportId);
+    return !d || cmp(d, btData) <= 0;
+  };
+
   return {
-    cheques: cheques.filter(c => c.status !== 'compensado'),
-    deposits: deposits.filter(d => (d as unknown as { status?: string }).status === 'pendente'),
-    payments: payments.filter(p => (p as unknown as { status?: string }).status === 'pendente'),
+    cheques: src.cheques.filter(c => foiCriadoAte(c.bt_report_id) && !baixadoAte(c.id, 'cheque')),
+    deposits: src.deposits.filter(d => foiCriadoAte(d.bt_report_id) && !baixadoAte(d.id, 'deposito')),
+    payments: src.payments.filter(p => foiCriadoAte(p.bt_report_id) && !baixadoAte(p.id, 'pagamento')),
   };
 }
 

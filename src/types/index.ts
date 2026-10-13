@@ -17,6 +17,8 @@ export type RevenueType = 'contabil' | 'financeira';
 
 export type ChequeStatus = 'a_compensar' | 'compensado';
 
+export type PendencyKind = 'cheque' | 'deposito' | 'pagamento';
+
 export type ConvenioSourceType = 'convenio' | 'receita';
 
 export interface BtReport {
@@ -157,5 +159,13 @@ export interface Subalinea {
   descricao: string;
   ativo: boolean;
   ordem: number;
+  created_at: string;
+}
+
+export interface PendencyResolution {
+  id: string;
+  kind: PendencyKind;
+  ref_id: string;
+  bt_report_id: string;
   created_at: string;
 }
