@@ -6,15 +6,14 @@ interface BtFechadoGuardProps {
   children: ReactNode;
 }
 
-// Quando o BT está fechado, bloqueia toda interação de edição sobre o conteúdo.
+// Em modo somente leitura o conteúdo NÃO é mais coberto por uma camada com
+// pointer-events: none — isso congelava cards de consulta (BTs Recentes,
+// "Ver Todos") e impedia a troca de BT. A leitura e a navegação permanecem
+// livres; a edição é bloqueada individualmente por disabled={fechado} em
+// cada botão/campo de gravação nas páginas.
 export function BtFechadoGuard({ fechado, children }: BtFechadoGuardProps) {
   if (!fechado) return <>{children}</>;
-  return (
-    <div className="relative select-none">
-      <div className="pointer-events-none opacity-60 grayscale">{children}</div>
-      <div className="absolute inset-0 z-30 cursor-not-allowed" aria-hidden="true" />
-    </div>
-  );
+  return <>{children}</>;
 }
 
 export function BtFechadoBanner({ numero }: { numero: string }) {

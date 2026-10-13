@@ -1,4 +1,4 @@
-import type { Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
+import type { Cheque, DepositPending, PaymentPending, Reconciliation } from '@/types';
 
 // Fonte única de verdade do status de conciliação.
 // Conciliação Bancária e Fechamento Diário avaliam com esta MESMA fórmula ao vivo
@@ -11,23 +11,19 @@ export interface OpenItems {
   payments: PaymentPending[];
 }
 
-// Pendências abertas = criadas em qualquer BT, sem baixa no BT atual.
+// Pendências abertas = registros SEM baixa permanente no banco de dados.
+// A baixa é gravada no registro original (status do cheque/depósito/pagamento)
+// e vale para TODOS os BTs: um item compensado/pago/realizado nunca mais
+// reaparece, nem em BTs futuros nem ao reabrir BTs anteriores.
 export function getOpenItems(
   cheques: Cheque[],
   deposits: DepositPending[],
-  payments: PaymentPending[],
-  resolutions: PendencyResolution[],
-  currentBtId: string
+  payments: PaymentPending[]
 ): OpenItems {
-  const resolved = new Set(
-    resolutions
-      .filter(r => r.bt_report_id === currentBtId)
-      .map(r => `${r.kind}:${r.ref_id}`)
-  );
   return {
-    cheques: cheques.filter(c => !resolved.has(`cheque:${c.id}`)),
-    deposits: deposits.filter(d => !resolved.has(`deposito:${d.id}`)),
-    payments: payments.filter(p => !resolved.has(`pagamento:${p.id}`)),
+    cheques: cheques.filter(c => c.status !== 'compensado'),
+    deposits: deposits.filter(d => (d as unknown as { status?: string }).status === 'pendente'),
+    payments: payments.filter(p => (p as unknown as { status?: string }).status === 'pendente'),
   };
 }
 

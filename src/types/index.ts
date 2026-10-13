@@ -123,6 +123,7 @@ export interface DepositPending {
   account_id: string;
   valor: number;
   descricao: string | null;
+  status: string;
   created_at: string;
 }
 
@@ -146,14 +147,7 @@ export interface PaymentPending {
   valor: number;
   data_lancamento: string;
   descricao: string | null;
-  created_at: string;
-}
-
-export interface PendencyResolution {
-  id: string;
-  kind: 'cheque' | 'deposito' | 'pagamento';
-  ref_id: string;
-  bt_report_id: string;
+  status: string;
   created_at: string;
 }
 

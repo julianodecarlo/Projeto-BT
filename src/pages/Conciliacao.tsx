@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
-import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
+import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, BtReport } from '@/types';
 
 type ResolutionKind = 'cheque' | 'deposito' | 'pagamento';
 
@@ -83,7 +83,6 @@ export default function Conciliacao() {
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
   const [payments, setPayments] = useState<PaymentPending[]>([]);
-  const [resolutions, setResolutions] = useState<PendencyResolution[]>([]);
   const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [convenios, setConvenios] = useState<Convenio[]>([]);
@@ -111,11 +110,10 @@ export default function Conciliacao() {
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [chequesRes, depositsRes, paymentsRes, resolutionsRes, reconRes, txRes, convRes, btsRes] = await Promise.all([
+    const [chequesRes, depositsRes, paymentsRes, reconRes, txRes, convRes, btsRes] = await Promise.all([
       supabase.from('cheques').select('*').order('data_emissao', { ascending: true }),
       supabase.from('deposits_pending').select('*').order('created_at', { ascending: true }),
       supabase.from('payments_pending').select('*').order('created_at', { ascending: true }),
-      supabase.from('pendency_resolutions').select('*'),
       supabase.from('reconciliation').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id).order('ordem', { ascending: true }),
       supabase.from('convenios').select('*'),
@@ -124,7 +122,7 @@ export default function Conciliacao() {
     if (chequesRes.data) setCheques(chequesRes.data as Cheque[]);
     if (depositsRes.data) setDeposits(depositsRes.data as DepositPending[]);
     if (paymentsRes.data) setPayments(paymentsRes.data as PaymentPending[]);
-    if (resolutionsRes.data) setResolutions(resolutionsRes.data as PendencyResolution[]);
+    if (reconRes.data) setReconciliations(reconRes.data as Reconciliation[]);
     if (reconRes.data) setReconciliations(reconRes.data as Reconciliation[]);
     if (txRes.data) setTransactions(txRes.data as Transaction[]);
     if (convRes.data) setConvenios(convRes.data as Convenio[]);
@@ -154,33 +152,29 @@ export default function Conciliacao() {
     return accTxs[accTxs.length - 1].saldo_final;
   };
 
-  // Pendências abertas = criadas em qualquer BT, sem baixa no BT atual.
-  // A baixa é dada apenas no BT em que é clicada; BTs anteriores permanecem inalterados.
+  // Pendências abertas = registros SEM baixa permanente no banco.
+  // Um item compensado/pago/realizado em QUALQUER BT nunca mais reaparece,
+  // nem em BTs futuros nem ao reabrir/consultar BTs anteriores.
   const openItems = useMemo(() => {
     if (!currentBt) return { cheques: [] as Cheque[], deposits: [] as DepositPending[], payments: [] as PaymentPending[] };
-    const resolvedInCurrent = new Set(
-      resolutions.filter(r => r.bt_report_id === currentBt.id).map(r => `${r.kind}:${r.ref_id}`)
-    );
-    const filter = <T extends { id: string }>(rows: T[], kind: ResolutionKind): T[] =>
-      rows.filter(row => !resolvedInCurrent.has(`${kind}:${row.id}`));
     return {
-      cheques: filter(cheques, 'cheque'),
-      deposits: filter(deposits, 'deposito'),
-      payments: filter(payments, 'pagamento'),
+      cheques: cheques.filter(c => c.status !== 'compensado'),
+      deposits: deposits.filter(d => d.status === 'pendente'),
+      payments: payments.filter(p => p.status === 'pendente'),
     };
-  }, [currentBt, resolutions, cheques, deposits, payments]);
+  }, [currentBt, cheques, deposits, payments]);
 
   const resolve = async (kind: ResolutionKind, refId: string) => {
     if (!currentBt) return;
-    const { error } = await supabase
-      .from('pendency_resolutions')
-      .insert({ kind, ref_id: refId, bt_report_id: currentBt.id });
-    if (error) return;
-    // Grava a baixa também no registro original para manter a camada de dados coerente
+    // Baixa PERMANENTE: grava o status no próprio registro. Vale globalmente
+    // (todos os BTs) e sobrevive à geração de novos BTs e a reaberturas.
     const statusMap = { cheque: 'compensado', deposito: 'realizado', pagamento: 'pago' } as const;
     const tableMap = { cheque: 'cheques', deposito: 'deposits_pending', pagamento: 'payments_pending' } as const;
-    await supabase.from(tableMap[kind]).update({ status: statusMap[kind] }).eq('id', refId);
-    setResolutions([...resolutions, { kind, ref_id: refId, bt_report_id: currentBt.id, id: crypto.randomUUID(), created_at: new Date().toISOString() }]);
+    const { error } = await supabase.from(tableMap[kind]).update({ status: statusMap[kind] }).eq('id', refId);
+    if (error) return;
+    if (kind === 'cheque') setCheques(cheques.map(c => (c.id === refId ? { ...c, status: 'compensado' as const } : c)));
+    if (kind === 'deposito') setDeposits(deposits.map(d => (d.id === refId ? { ...d, status: 'realizado' } : d)));
+    if (kind === 'pagamento') setPayments(payments.map(p => (p.id === refId ? { ...p, status: 'pago' } : p)));
   };
 
   // Pendências por conta: (+ cheques a compensar + pagamentos pendentes - depósitos pendentes)

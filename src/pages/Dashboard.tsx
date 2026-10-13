@@ -51,6 +51,8 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
     onNavigate('movimentacao');
   };
 
+  const fechado = currentBt?.status === 'fechado';
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -112,13 +114,13 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
           )}
         </div>
         <div className="mt-4 flex gap-2 flex-wrap">
-          <Button variant="secondary" onClick={onNewBt} className="bg-white/10 border-white/20 text-white hover:bg-white/20">
+          <Button variant="secondary" onClick={onNewBt} disabled={fechado} className="bg-white/10 border-white/20 text-white hover:bg-white/20 disabled:opacity-40">
             <FileText className="w-4 h-4" /> Novo BT
           </Button>
           <Button variant="secondary" onClick={() => setShowAllBts(true)} className="bg-white/10 border-white/20 text-white hover:bg-white/20">
             <List className="w-4 h-4" /> Ver Todos
           </Button>
-          <Button variant="ghost" onClick={() => onNavigate('movimentacao')} className="text-white hover:bg-white/10">
+          <Button variant="ghost" onClick={() => onNavigate('movimentacao')} disabled={fechado} className="text-white hover:bg-white/10 disabled:opacity-40">
             Nova Movimentação <ArrowRight className="w-4 h-4" />
           </Button>
         </div>
@@ -149,7 +151,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-bold text-slate-800">Contas Cadastradas</h3>
-            <Button size="sm" variant="secondary" onClick={() => setShowAccountModal(true)}>
+            <Button size="sm" variant="secondary" onClick={() => setShowAccountModal(true)} disabled={fechado}>
               <Settings className="w-3.5 h-3.5" /> Gerenciar Contas
             </Button>
           </div>
