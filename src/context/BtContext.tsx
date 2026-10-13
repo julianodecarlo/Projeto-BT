@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode, useCall
 import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
+import { forceRecalcBtSaldos } from '@/lib/recalc';
 import type { BtReport, Account } from '@/types';
 import Decimal from 'decimal.js';
 
@@ -220,7 +221,13 @@ export function BtProvider({ children }: { children: ReactNode }) {
           .order('data', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (lastBt) setCurrentBt(lastBt as BtReport);
+        if (lastBt) {
+          // Re-sincronização forçada: recalcula do zero e sobrescreve os saldos
+          // salvos no banco para todas as contas do BT ativo antes de qualquer aba renderizar
+          const { data: accs } = await supabase.from('accounts').select('*');
+          await forceRecalcBtSaldos(lastBt.id, (accs || []) as Account[]);
+          setCurrentBt(lastBt as BtReport);
+        }
       } catch (err) {
         console.error('Erro ao inicializar BtProvider:', err);
       } finally {
