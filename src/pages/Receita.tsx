@@ -227,8 +227,10 @@ export default function Receita() {
     );
   }
 
-  const revContabil = revenues.filter(r => r.tipo === 'contabil').map(effective);
-  const revFinanceira = revenues.filter(r => r.tipo === 'financeira').map(effective);
+  const bySubCodigo = (a: { subalinea: string }, b: { subalinea: string }) =>
+    a.subalinea.localeCompare(b.subalinea, undefined, { numeric: true, sensitivity: 'base' });
+  const revContabil = revenues.filter(r => r.tipo === 'contabil').map(effective).sort(bySubCodigo);
+  const revFinanceira = revenues.filter(r => r.tipo === 'financeira').map(effective).sort(bySubCodigo);
 
   // Consolidação por subalínea (somente saldos diferentes de zero)
   const parseSubLabel = (label: string) => {
@@ -251,7 +253,11 @@ export default function Receita() {
     const f = revFinanceira.find(r => r.subalinea === label);
     consolidado.push({ codigo, nome, saldoCont: toDecimal(c?.saldo_final_contabil ?? 0), saldoFin: toDecimal(f?.saldo_final_financeiro ?? 0) });
   }
-  const comSaldo = consolidado.filter(x => !x.saldoCont.isZero() || !x.saldoFin.isZero());
+  const comSaldo = consolidado
+    .filter(x => !x.saldoCont.isZero() || !x.saldoFin.isZero())
+    .sort((a, b) =>
+      `${a.codigo} - ${a.nome}`.localeCompare(`${b.codigo} - ${b.nome}`, undefined, { numeric: true, sensitivity: 'base' })
+    );
   const totalContResumo = comSaldo.reduce((acc, x) => acc.plus(x.saldoCont), new Decimal(0)).toNumber();
   const totalFinResumo = comSaldo.reduce((acc, x) => acc.plus(x.saldoFin), new Decimal(0)).toNumber();
   const totalGeralResumo = totalContResumo + totalFinResumo;
