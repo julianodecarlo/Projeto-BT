@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Trash2, Layers, FileText, Pencil, X, Check, Handshake } from 'lucide-react';
+import { Plus, Trash2, Layers, FileText, Pencil, X, Check, Handshake, Save, Lock, LockOpen, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, EmptyState } from '@/components/ui/Field';
@@ -8,6 +8,7 @@ import { formatCurrency, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { RevenueOwn, RevenueType, Subalinea } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { MoneyInput } from '@/components/ui/MoneyInput';
+import Modal from '@/components/ui/Modal';
 
 export default function Receita() {
   const { currentBt, accounts } = useBt();
@@ -181,33 +182,64 @@ export default function Receita() {
     setRevenues(revenues.filter(r => r.id !== id));
   };
 
-  // Edição direta nas células: recalcula em tempo real e grava ao sair do campo
+  // Edição em células: as alterações ficam pendentes até clicar em "Salvar Lançamentos"
   const [cellEdits, setCellEdits] = useState<Record<string, string>>({});
+  const [saldoEdits, setSaldoEdits] = useState<Record<string, string>>({});
+  const [saldoUnlock, setSaldoUnlock] = useState(false);
+  const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState('');
   const getCell = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') =>
     cellEdits[`${r.id}:${field}`] ?? String(r[field] ?? '');
   const setCell = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos', v: string) =>
     setCellEdits(prev => ({ ...prev, [`${r.id}:${field}`]: v }));
+  const getSaldoCell = (r: RevenueOwn) => saldoEdits[r.id] ?? String(r.saldo_anterior ?? '');
+  const setSaldoCell = (r: RevenueOwn, v: string) =>
+    setSaldoEdits(prev => ({ ...prev, [r.id]: v }));
 
   const effective = (r: RevenueOwn): RevenueOwn => {
+    const saldoAnt = toDecimal(getSaldoCell(r) || 0);
     if (r.tipo === 'contabil') {
       const arrec = toDecimal(getCell(r, 'arrecadacao') || 0);
-      return { ...r, arrecadacao: arrec.toNumber(), saldo_final_contabil: toDecimal(r.saldo_anterior).plus(arrec).toNumber() };
+      return { ...r, saldo_anterior: saldoAnt.toNumber(), arrecadacao: arrec.toNumber(), saldo_final_contabil: saldoAnt.plus(arrec).toNumber() };
     }
     const caixa = toDecimal(getCell(r, 'caixa') || 0);
     const bancos = toDecimal(getCell(r, 'bancos') || 0);
-    return { ...r, caixa: caixa.toNumber(), bancos: bancos.toNumber(), saldo_final_financeiro: toDecimal(r.saldo_anterior).plus(caixa).plus(bancos).toNumber() };
+    return { ...r, saldo_anterior: saldoAnt.toNumber(), caixa: caixa.toNumber(), bancos: bancos.toNumber(), saldo_final_financeiro: saldoAnt.plus(caixa).plus(bancos).toNumber() };
   };
 
-  const commitCell = async (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => {
-    const key = `${r.id}:${field}`;
-    if (!(key in cellEdits)) return;
-    const eff = effective(r);
-    const payload = r.tipo === 'contabil'
-      ? { arrecadacao: eff.arrecadacao, saldo_final_contabil: eff.saldo_final_contabil }
-      : { caixa: eff.caixa, bancos: eff.bancos, saldo_final_financeiro: eff.saldo_final_financeiro };
-    const { data, error } = await supabase.from('revenue_own').update(payload).eq('id', r.id).select().single();
-    setCellEdits(prev => { const n = { ...prev }; delete n[key]; return n; });
-    if (!error && data) setRevenues(prev => prev.map(x => (x.id === r.id ? (data as RevenueOwn) : x)));
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(''), 3500);
+  };
+
+  const saveAll = async () => {
+    const ids = new Set<string>([
+      ...Object.keys(cellEdits).map(k => k.split(':')[0]),
+      ...Object.keys(saldoEdits),
+    ]);
+    if (ids.size === 0) {
+      showToast('Nenhuma alteração pendente para salvar');
+      return;
+    }
+    setSaving(true);
+    let ok = true;
+    for (const id of ids) {
+      const r = revenues.find(x => x.id === id);
+      if (!r) continue;
+      const eff = effective(r);
+      const payload = r.tipo === 'contabil'
+        ? { saldo_anterior: eff.saldo_anterior, arrecadacao: eff.arrecadacao, saldo_final_contabil: eff.saldo_final_contabil }
+        : { saldo_anterior: eff.saldo_anterior, caixa: eff.caixa, bancos: eff.bancos, saldo_final_financeiro: eff.saldo_final_financeiro };
+      const { data, error } = await supabase.from('revenue_own').update(payload).eq('id', id).select().single();
+      if (!error && data) setRevenues(prev => prev.map(x => (x.id === id ? (data as RevenueOwn) : x)));
+      else ok = false;
+    }
+    setCellEdits({});
+    setSaldoEdits({});
+    setSaldoUnlock(false);
+    setSaving(false);
+    showToast(ok ? 'Lançamentos salvos com sucesso' : 'Erro ao salvar alguns lançamentos. Tente novamente.');
   };
 
   const cellInput = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => (
@@ -217,6 +249,35 @@ export default function Receita() {
       onKeyDown={() => {}}
       className="w-24 px-1 py-1 text-sm"
     />
+  );
+
+  const saldoCell = (r: RevenueOwn) =>
+    saldoUnlock ? (
+      <MoneyInput
+        value={parseFloat(getSaldoCell(r)) || null}
+        onValueChange={(v) => setSaldoCell(r, v ? String(v) : '')}
+        onKeyDown={() => {}}
+        className="w-24 px-1 py-1 text-sm"
+      />
+    ) : (
+      formatCurrency(r.saldo_anterior)
+    );
+
+  const saldoButtons = (
+    <div className="flex items-center gap-2">
+      {saldoUnlock ? (
+          <Button size="sm" variant="secondary" onClick={() => setSaldoUnlock(false)}>
+          <LockOpen className="w-3.5 h-3.5" /> Saldo Anterior liberado para edição
+        </Button>
+      ) : (
+        <Button size="sm" variant="secondary" onClick={() => setShowUnlockConfirm(true)}>
+          <Lock className="w-3.5 h-3.5" /> Editar Saldo Anterior
+        </Button>
+      )}
+      <Button size="sm" onClick={saveAll} disabled={saving}>
+        <Save className="w-3.5 h-3.5" /> {saving ? 'Salvando...' : 'Salvar Lançamentos'}
+      </Button>
+    </div>
   );
 
   if (!currentBt) {
@@ -335,16 +396,21 @@ export default function Receita() {
       {/* RP Contábil - 3 columns */}
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-blue-600" />
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Receitas Próprias - Contábil (3 Colunas)</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Saldo Anterior · Arrecadação · Saldo Final</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-blue-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Receitas Próprias - Contábil (3 Colunas)</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Saldo Anterior · Arrecadação · Saldo Final</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {saldoButtons}
+              <Button size="sm" onClick={() => { setRevTipo('contabil'); setShowRevForm(!showRevForm); }}>
+                <Plus className="w-3.5 h-3.5" /> Lançamento
+              </Button>
             </div>
           </div>
-          <Button size="sm" onClick={() => { setRevTipo('contabil'); setShowRevForm(!showRevForm); }}>
-            <Plus className="w-3.5 h-3.5" /> Lançamento
-          </Button>
         </div>
         {showRevForm && revTipo === 'contabil' && (
           <div className="p-3 bg-blue-50/30 border-b border-slate-100 grid grid-cols-3 gap-2">
@@ -387,7 +453,7 @@ export default function Receita() {
               {revContabil.map(r => (
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50 group">
                   <td className="px-4 py-2.5 text-slate-700">{r.subalinea}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.saldo_anterior)}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">{saldoCell(r)}</td>
                   <td className="px-2 py-1.5 text-right">{cellInput(r, 'arrecadacao')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_contabil)}</td>
                   <td className="px-2 py-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -417,16 +483,21 @@ export default function Receita() {
       {/* RP Financeira - 4 columns */}
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-emerald-600" />
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Receitas Próprias - Financeira (4 Colunas)</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Saldo Anterior · Caixa · Bancos · Saldo Final</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-emerald-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Receitas Próprias - Financeira (4 Colunas)</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Saldo Anterior · Caixa · Bancos · Saldo Final</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {saldoButtons}
+              <Button size="sm" onClick={() => { setRevTipo('financeira'); setShowRevForm(!showRevForm); }}>
+                <Plus className="w-3.5 h-3.5" /> Lançamento
+              </Button>
             </div>
           </div>
-          <Button size="sm" onClick={() => { setRevTipo('financeira'); setShowRevForm(!showRevForm); }}>
-            <Plus className="w-3.5 h-3.5" /> Lançamento
-          </Button>
         </div>
         {showRevForm && revTipo === 'financeira' && (
           <div className="p-3 bg-emerald-50/30 border-b border-slate-100 grid grid-cols-4 gap-2">
@@ -473,7 +544,7 @@ export default function Receita() {
               {revFinanceira.map(r => (
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50 group">
                   <td className="px-4 py-2.5 text-slate-700">{r.subalinea}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(r.saldo_anterior)}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">{saldoCell(r)}</td>
                   <td className="px-2 py-1.5 text-right">{cellInput(r, 'caixa')}</td>
                   <td className="px-2 py-1.5 text-right">{cellInput(r, 'bancos')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_financeiro)}</td>
@@ -560,6 +631,31 @@ export default function Receita() {
       </div>
     </div>
     </BtFechadoGuard>
+    <Modal open={showUnlockConfirm} onClose={() => setShowUnlockConfirm(false)} title="Editar Saldo Anterior">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Atenção: A alteração manual do saldo anterior afeta a integridade dos cálculos do BT. Deseja prosseguir?
+        </p>
+      </div>
+      <div className="flex justify-end gap-2 mt-5">
+        <Button variant="secondary" onClick={() => setShowUnlockConfirm(false)}>Cancelar</Button>
+        <Button
+          onClick={() => { setShowUnlockConfirm(false); setSaldoUnlock(true); }}
+          className="!bg-amber-600 hover:!bg-amber-700"
+        >
+          <LockOpen className="w-4 h-4" /> Sim, liberar edição
+        </Button>
+      </div>
+    </Modal>
+    {toast && (
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white text-sm font-medium rounded-lg shadow-xl">
+          <Check className="w-4 h-4 text-emerald-400" />
+          {toast}
+        </div>
+      </div>
+    )}
     </>
   );
 }
