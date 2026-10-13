@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
+import { validarBtCentral, type PendenciaItem } from '@/lib/validacao';
 import type { BtReport, Account, Reconciliation } from '@/types';
 import Decimal from 'decimal.js';
 
@@ -20,6 +21,9 @@ interface BtContextValue {
   deleteBt: (id: string) => Promise<boolean>;
   refreshBt: () => Promise<void>;
   cascadeRecalculate: (fromBtId: string) => Promise<void>;
+  salvarBtRascunho: () => Promise<boolean>;
+  validarBtAtual: () => Promise<PendenciaItem[]>;
+  fecharBtAtual: () => Promise<PendenciaItem[]>;
 }
 
 const BtContext = createContext<BtContextValue | null>(null);
@@ -157,6 +161,57 @@ export function BtProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const salvarBtRascunho = useCallback(async (): Promise<boolean> => {
+    if (!currentBt) return false;
+    // Persistência geral: recalcula os saldos de todas as contas do BT a partir
+    // do zero (sobrescreve rascunhos sem duplicar lançamentos).
+    await forceRecalcBtSaldos(currentBt, accounts as Account[]);
+    const { error } = await supabase
+      .from('bt_reports')
+      .update({ status: 'rascunho' })
+      .eq('id', currentBt.id);
+    if (error) {
+      console.error('Erro ao salvar BT:', error.message || error);
+      return false;
+    }
+    await refreshBt();
+    return true;
+  }, [currentBt, accounts, refreshBt]);
+
+  const validarBtAtual = useCallback(async (): Promise<PendenciaItem[]> => {
+    if (!currentBt) return [{ location: 'Sistema', message: 'Nenhum BT ativo.' }];
+    await refreshBt();
+    const pend = await validarBtCentral(currentBt.id, accounts, reconciliations);
+    if (pend.length === 0) {
+      const { error } = await supabase
+        .from('bt_reports')
+        .update({ status: 'validado' })
+        .eq('id', currentBt.id);
+      if (error) {
+        console.error('Erro ao marcar BT como validado:', error.message || error);
+      }
+      await refreshBt();
+    }
+    return pend;
+  }, [currentBt, accounts, reconciliations, refreshBt]);
+
+  const fecharBtAtual = useCallback(async (): Promise<PendenciaItem[]> => {
+    if (!currentBt) return [{ location: 'Sistema', message: 'Nenhum BT ativo.' }];
+    await forceRecalcBtSaldos(currentBt, accounts as Account[]);
+    const pend = await validarBtCentral(currentBt.id, accounts, reconciliations);
+    if (pend.length > 0) return pend;
+    const { error } = await supabase
+      .from('bt_reports')
+      .update({ status: 'fechado' })
+      .eq('id', currentBt.id);
+    if (error) {
+      console.error('Erro ao fechar BT:', error.message || error);
+      return [{ location: 'Sistema', message: 'Não foi possível fechar o BT. Tente novamente.' }];
+    }
+    await refreshBt();
+    return [];
+  }, [currentBt, accounts, reconciliations, refreshBt]);
+
   const updateBt = useCallback(async (id: string, fields: { numero: string; data: string; data_fim: string | null }): Promise<boolean> => {
     const { error } = await supabase.from('bt_reports').update(fields).eq('id', id);
     if (error) {
@@ -232,7 +287,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, [fetchAccounts]);
 
   return (
-    <BtContext.Provider value={{ currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate }}>
+    <BtContext.Provider value={{ currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate, salvarBtRascunho, validarBtAtual, fecharBtAtual }}>
       {children}
     </BtContext.Provider>
   );}
