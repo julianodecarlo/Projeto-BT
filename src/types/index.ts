@@ -70,7 +70,8 @@ export type TransactionTipo =
   | 'repasse_reitoria'
   | 'transf_tesouro_receita'
   | 'transf_tesouro_diarias'
-  | 'transf_livre';
+  | 'transf_livre'
+  | 'deposito_anulacao';
 
 export interface Transaction {
   id: string;

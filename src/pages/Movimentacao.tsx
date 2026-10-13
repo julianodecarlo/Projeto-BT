@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X } from 'lucide-react';
+import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X, ArrowDownToLine } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
-import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
+import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
 import type { Transaction, BudgetType } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 
@@ -32,6 +32,14 @@ export default function Movimentacao() {
   const [savingTransfer, setSavingTransfer] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<{ ids: string[]; origemId: string; destinoId: string; valor: number } | null>(null);
   const [editingRepasse, setEditingRepasse] = useState<{ id: string; valor: number } | null>(null);
+
+  // Depósitos / Anulações
+  const [depAccountId, setDepAccountId] = useState('');
+  const [depKind, setDepKind] = useState<'deposito' | 'anulacao'>('deposito');
+  const [depValor, setDepValor] = useState<number | null>(null);
+  const [depData, setDepData] = useState(todayISO());
+  const [depDescricao, setDepDescricao] = useState('');
+  const [editingDep, setEditingDep] = useState<string | null>(null);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -387,6 +395,102 @@ export default function Movimentacao() {
     fetchTransactions();
   };
 
+  // Depósitos / Anulações: entrada (depósito) ou saída (anulação) em uma conta
+  const handleSaveDeposito = async () => {
+    if (!currentBt || !depAccountId || !depValor || depValor === 0) return;
+    setSavingTransfer(true);
+    setTransferError(null);
+    const valor = Math.abs(depValor);
+    const movimento = depKind === 'deposito' ? 'entrada' : 'saida';
+    const descricao = depDescricao.trim() || (depKind === 'deposito' ? 'Depósito' : 'Anulação');
+    const getSaldoAtual = async (accId: string): Promise<number> => {
+      const { data: lastTx } = await supabase
+        .from('transactions')
+        .select('saldo_final')
+        .eq('bt_report_id', currentBt.id)
+        .eq('account_id', accId)
+        .order('ordem', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastTx) return lastTx.saldo_final;
+      const { data: accData } = await supabase.from('accounts').select('saldo_inicial').eq('id', accId).maybeSingle();
+      return accData?.saldo_inicial ?? 0;
+    };
+    if (editingDep) {
+      const { error } = await supabase.from('transactions').update({
+        valor,
+        tipo_movimento: movimento,
+        descricao,
+        data_lancamento: depData || currentBt.data,
+      }).eq('id', editingDep);
+      if (!error) await recalcAccountSaldos(depAccountId);
+      setSavingTransfer(false);
+      if (!error) {
+        setEditingDep(null);
+        setDepValor(null);
+        setDepDescricao('');
+        setDepKind('deposito');
+        setDepData(todayISO());
+        setTransferFlash('Lançamento atualizado.');
+        setTimeout(() => setTransferFlash(null), 3000);
+        fetchTransactions();
+      } else {
+        setTransferError('Não foi possível atualizar o lançamento. Tente novamente.');
+      }
+      return;
+    }
+    const saldoAnt = await getSaldoAtual(depAccountId);
+    const saldoFin = movimento === 'entrada'
+      ? toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber()
+      : toDecimal(saldoAnt).minus(toDecimal(valor)).toNumber();
+    const { error } = await supabase.from('transactions').insert({
+      bt_report_id: currentBt.id,
+      account_id: depAccountId,
+      descricao,
+      tipo_movimento: movimento,
+      valor,
+      saldo_anterior: saldoAnt,
+      saldo_final: saldoFin,
+      data_lancamento: depData || currentBt.data,
+      tipo: 'deposito_anulacao',
+    });
+    if (!error) await recalcAccountSaldos(depAccountId);
+    setSavingTransfer(false);
+    if (!error) {
+      setDepValor(null);
+      setDepDescricao('');
+      setTransferFlash(depKind === 'deposito' ? 'Depósito registrado.' : 'Anulação registrada.');
+      setTimeout(() => setTransferFlash(null), 3000);
+      fetchTransactions();
+    } else {
+      setTransferError('Não foi possível registrar o lançamento. Tente novamente.');
+    }
+  };
+
+  const startEditDeposito = (tx: Transaction) => {
+    setEditingDep(tx.id);
+    setDepAccountId(tx.account_id);
+    setDepKind(tx.tipo_movimento === 'entrada' ? 'deposito' : 'anulacao');
+    setDepValor(tx.valor);
+    setDepData(tx.data_lancamento || todayISO());
+    setDepDescricao(tx.descricao);
+  };
+
+  const deleteDeposito = async (tx: Transaction) => {
+    await supabase.from('transactions').delete().eq('id', tx.id);
+    if (editingDep === tx.id) {
+      setEditingDep(null);
+      setDepValor(null);
+      setDepDescricao('');
+    }
+    await recalcAccountSaldos(tx.account_id);
+    fetchTransactions();
+  };
+
+  const depositos = useMemo(() =>
+    transactions.filter(t => t.tipo === 'deposito_anulacao'),
+  [transactions]);
+
   const totalGeral = accounts.filter(a => a.ativo).reduce((sum, acc) => sum + getAccountSubtotal(acc.id), 0);
   const totalTransferencias = Array.from(transferenciasPorConta.values()).reduce((s, v) => s + v, 0);
   const totaisPorColuna = accounts.filter(a => a.ativo).reduce(
@@ -678,8 +782,7 @@ export default function Movimentacao() {
             <div className="mt-5 border border-slate-200 rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Transferências Registradas</h4>
-              </div>
-              <table className="w-full text-sm">
+              </div>              <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
                     <th className="px-3 py-2 text-left font-semibold">Conta Origem</th>
@@ -709,6 +812,117 @@ export default function Movimentacao() {
                           </button>
                           <button
                             onClick={() => deleteTransfer(p)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <ArrowDownToLine className="w-4 h-4 text-amber-600" />
+            <h3 className="text-sm font-bold text-slate-800">Depósitos / Anulações</h3>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            Depósito credita a conta escolhida; anulação debita. O saldo é atualizado imediatamente em todas as abas.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Conta">
+              <Select value={depAccountId} onChange={(e) => setDepAccountId(e.target.value)}>
+                <option value="">Selecione...</option>
+                {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
+              </Select>
+            </Field>
+            <Field label="Tipo">
+              <Select value={depKind} onChange={(e) => setDepKind(e.target.value as 'deposito' | 'anulacao')}>
+                <option value="deposito">Depósito / Entrada</option>
+                <option value="anulacao">Anulação</option>
+              </Select>
+            </Field>
+            <Field label="Valor (R$)">
+              <MoneyInput value={depValor} onValueChange={setDepValor} className="w-full px-3 py-2 text-sm" />
+            </Field>
+            <Field label="Data">
+              <input
+                type="date"
+                value={depData}
+                onChange={(e) => setDepData(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </Field>
+            <Field label="Descrição" className="md:col-span-2">
+              <input
+                type="text"
+                value={depDescricao}
+                onChange={(e) => setDepDescricao(e.target.value)}
+                placeholder="Ex: Depósito em conta movimento"
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            {editingDep && (
+              <Button size="sm" variant="ghost" onClick={() => { setEditingDep(null); setDepAccountId(''); setDepKind('deposito'); setDepValor(null); setDepData(todayISO()); setDepDescricao(''); }}>
+                <X className="w-4 h-4" /> Cancelar Edição
+              </Button>
+            )}
+            <Button size="sm" onClick={handleSaveDeposito} disabled={savingTransfer || !depAccountId || !depValor || depValor === 0}>
+              {savingTransfer ? 'Registrando...' : editingDep ? 'Atualizar Lançamento' : 'Registrar'}
+            </Button>
+          </div>
+
+          {depositos.length > 0 && (
+            <div className="mt-5 border border-slate-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Histórico de Depósitos / Anulações</h4>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
+                    <th className="px-3 py-2 text-left font-semibold">Conta</th>
+                    <th className="px-3 py-2 text-left font-semibold">Tipo / Data / Descrição</th>
+                    <th className="px-3 py-2 text-right font-semibold">Valor</th>
+                    <th className="px-3 py-2 text-center font-semibold">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {depositos.map(d => (
+                    <tr
+                      key={d.id}
+                      className={`border-t border-slate-100 ${editingDep === d.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className="px-3 py-2 text-slate-700">{accounts.find(a => a.id === d.account_id)?.nome ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-700">
+                        <span className={`font-semibold ${d.tipo_movimento === 'entrada' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {d.tipo_movimento === 'entrada' ? 'Depósito' : 'Anulação'}
+                        </span>
+                        <span className="text-slate-500"> · {formatDate(d.data_lancamento)} · {d.descricao}</span>
+                      </td>
+                      <td className={`px-3 py-2 text-right font-semibold ${d.tipo_movimento === 'entrada' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {formatCurrency(d.valor)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => startEditDeposito(d)}
+                            disabled={fechado}
+                            className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-40"
+                            title="Editar"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteDeposito(d)}
                             disabled={fechado}
                             className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40"
                             title="Excluir"
