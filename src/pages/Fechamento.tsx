@@ -4,7 +4,8 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
-import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport } from '@/types';
+import { getOpenItems, pendenciasPorConta, getReconStatus } from '@/lib/reconStatus';
+import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending, PendencyResolution } from '@/types';
 
 interface ValidationCheck {
   label: string;
@@ -27,6 +28,8 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const [revenues, setRevenues] = useState<RevenueOwn[]>([]);
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [deposits, setDeposits] = useState<DepositPending[]>([]);
+  const [payments, setPayments] = useState<PaymentPending[]>([]);
+  const [resolutions, setResolutions] = useState<PendencyResolution[]>([]);
   const [elaboradoPor, setElaboradoPor] = useState('');
   const [cargoElaborado, setCargoElaborado] = useState('');
   const [conferidoPor, setConferidoPor] = useState('');
@@ -37,16 +40,20 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [txRes, revRes, cqRes, dpRes] = await Promise.all([
+    const [txRes, revRes, cqRes, dpRes, payRes, resRes] = await Promise.all([
       supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id),
       supabase.from('revenue_own').select('*').eq('bt_report_id', currentBt.id),
-      supabase.from('cheques').select('*').eq('bt_report_id', currentBt.id),
-      supabase.from('deposits_pending').select('*').eq('bt_report_id', currentBt.id),
+      supabase.from('cheques').select('*'),
+      supabase.from('deposits_pending').select('*'),
+      supabase.from('payments_pending').select('*'),
+      supabase.from('pendency_resolutions').select('*'),
     ]);
     if (txRes.data) setTransactions(txRes.data as Transaction[]);
     if (revRes.data) setRevenues(revRes.data as RevenueOwn[]);
     if (cqRes.data) setCheques(cqRes.data as Cheque[]);
     if (dpRes.data) setDeposits(dpRes.data as DepositPending[]);
+    if (payRes.data) setPayments(payRes.data as PaymentPending[]);
+    if (resRes.data) setResolutions(resRes.data as PendencyResolution[]);
     setElaboradoPor(currentBt.elaborado_por || '');
     setCargoElaborado(currentBt.cargo_elaborado || '');
     setConferidoPor(currentBt.conferido_por || '');
@@ -115,26 +122,49 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   // Contas de convênio têm conciliação periódica: divergência nelas não impede o fechamento diário
   const isContaConvenio = (accountId: string) =>
     accounts.find(a => a.id === accountId)?.categoria === 'convenio';
-  const divergentRecon = reconciliations.filter(r => r.divergente && !isContaConvenio(r.account_id));
-  const divergentConvenios = reconciliations.filter(r => r.divergente && isContaConvenio(r.account_id));
+
+  // Fórmula viva compartilhada com a Conciliação: avalia Extrato − Rendimentos −
+  // Dif.Arred.Rend − Pendências vs Saldo Orçamentário a cada render, respeitando
+  // o ajuste e as pendências reais — sem refazer o cálculo de forma isolada.
+  const openItems = getOpenItems(cheques, deposits, payments, resolutions, currentBt.id);
+  const pendMap = pendenciasPorConta(openItems);
+
+  const saldoOrcamentarioPorConta = (accId: string): number => {
+    const accTxs = transactions.filter(t => t.account_id === accId);
+    if (accTxs.length === 0) return accounts.find(a => a.id === accId)?.saldo_inicial ?? 0;
+    return accTxs[accTxs.length - 1].saldo_final;
+  };
+
+  const statusPorConta = accounts.filter(a => a.ativo).map(acc => ({
+    acc,
+    status: getReconStatus(
+      reconciliations.find(r => r.account_id === acc.id),
+      pendMap.get(acc.id) ?? 0,
+      saldoOrcamentarioPorConta(acc.id)
+    ),
+  }));
+
+  const divergentRecon = statusPorConta.filter(
+    x => x.status.divergente && !isContaConvenio(x.acc.id)
+  );
+  const divergentConvenios = statusPorConta.filter(
+    x => x.status.divergente && isContaConvenio(x.acc.id)
+  );
+  const accountsWithTx = new Set(transactions.map(t => t.account_id));
+  const accountsWithoutRecon = statusPorConta.filter(
+    x => x.status.pendente && accountsWithTx.has(x.acc.id) && !isContaConvenio(x.acc.id)
+  );
   checks.push({
     label: 'Conciliação bancária sem divergências',
-    passed: divergentRecon.length === 0,
-    detail: divergentRecon.length === 0
+    passed: divergentRecon.length === 0 && accountsWithoutRecon.length === 0,
+    detail: divergentRecon.length === 0 && accountsWithoutRecon.length === 0
       ? divergentConvenios.length > 0
         ? `Contas de movimento conciliadas · ${divergentConvenios.length} convênio(s) divergente(s) (conciliação periódica, não impede o fechamento)`
         : `${reconciliations.length} conta(s) conciliada(s)`
-      : `${divergentRecon.length} conta(s) com divergência`,
-  });
-
-  const accountsWithTx = new Set(transactions.map(t => t.account_id));
-  const accountsWithoutRecon = accounts.filter(a => a.ativo && accountsWithTx.has(a.id) && !isContaConvenio(a.id) && !reconciliations.find(r => r.account_id === a.id));
-  checks.push({
-    label: 'Todas as contas com movimento conciliadas',
-    passed: accountsWithoutRecon.length === 0,
-    detail: accountsWithoutRecon.length === 0
-      ? 'Todas as contas ativas com movimento foram conciliadas'
-      : `${accountsWithoutRecon.length} conta(s) sem conciliação`,
+      : [
+          divergentRecon.length > 0 ? `${divergentRecon.length} conta(s) com divergência` : '',
+          accountsWithoutRecon.length > 0 ? `${accountsWithoutRecon.length} conta(s) sem conciliação` : '',
+        ].filter(Boolean).join(' · '),
   });
 
   const hasContabil = revenues.some(r => r.tipo === 'contabil');
@@ -164,19 +194,18 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   // Lista detalhada de pendências com localização e atalho de navegação
   const pendingItems: PendingItem[] = [];
-  for (const r of divergentRecon) {
-    const acc = accounts.find(a => a.id === r.account_id);
-    const dif = toDecimal(r.saldo_conciliado).minus(toDecimal(r.saldo_orcamentario)).toNumber();
+  for (const x of divergentRecon) {
+    const dif = toDecimal(x.status.saldoConciliado).minus(toDecimal(saldoOrcamentarioPorConta(x.acc.id))).toNumber();
     pendingItems.push({
-      location: `Conciliação Bancária - Conta ${acc?.nome ?? '—'}`,
+      location: `Conciliação Bancária - Conta ${x.acc.nome ?? '—'}`,
       message: `Saldo com divergência de ${formatCurrency(dif)} entre Extrato e BT.`,
       goTo: 'conciliacao',
       goToLabel: 'Ir para Conciliação',
     });
   }
-  for (const a of accountsWithoutRecon) {
+  for (const x of accountsWithoutRecon) {
     pendingItems.push({
-      location: `Conciliação Bancária - Conta ${a.nome}`,
+      location: `Conciliação Bancária - Conta ${x.acc.nome}`,
       message: 'Conta com movimento no BT sem conciliação registrada.',
       goTo: 'conciliacao',
       goToLabel: 'Ir para Conciliação',
