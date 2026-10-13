@@ -105,10 +105,10 @@ export default function Movimentacao() {
     );
   };
 
-  // Soma líquida das transferências (repasse, livre) por conta a partir das transações
+  // Soma líquida das transferências (repasse, livre, depósitos/anulações) por conta
   const transferenciasPorConta = new Map<string, number>();
   for (const tx of transactions) {
-    if (tx.tipo === 'repasse_reitoria' || tx.tipo === 'transf_livre' || tx.tipo === 'transf_tesouro_receita' || tx.tipo === 'transf_tesouro_diarias') {
+    if (tx.tipo === 'repasse_reitoria' || tx.tipo === 'transf_livre' || tx.tipo === 'transf_tesouro_receita' || tx.tipo === 'transf_tesouro_diarias' || tx.tipo === 'deposito_anulacao') {
       const atual = transferenciasPorConta.get(tx.account_id) ?? 0;
       transferenciasPorConta.set(
         tx.account_id,
@@ -117,10 +117,11 @@ export default function Movimentacao() {
     }
   }
 
+  // Fórmula única: Saldo Final = Saldo Anterior + Entradas (transferências + depósitos/anulações) − Saídas (colunas orçamentárias)
   const getAccountSaldoFinal = (accId: string): number => {
-    const subtotal = getAccountSubtotal(accId);
-    const transf = transferenciasPorConta.get(accId) ?? 0;
-    return toDecimal(getAccountSaldoAnterior(accId)).minus(toDecimal(subtotal)).plus(toDecimal(transf)).toNumber();
+    const saidas = getAccountSubtotal(accId);
+    const entradas = transferenciasPorConta.get(accId) ?? 0;
+    return toDecimal(getAccountSaldoAnterior(accId)).plus(toDecimal(entradas)).minus(toDecimal(saidas)).toNumber();
   };
 
   const handleInputChange = (accId: string, field: keyof RowInput, value: string) => {
@@ -179,6 +180,9 @@ export default function Movimentacao() {
     }
 
     // Recarrega do banco: os valores permanecem na tela como histórico e continuam editáveis
+    for (const acc of accounts) {
+      await recalcAccountSaldos(acc.id);
+    }
     await fetchTransactions();
     setSavedFlash('Movimentações salvas com sucesso!');
     setTimeout(() => setSavedFlash(null), 3000);
@@ -395,13 +399,12 @@ export default function Movimentacao() {
     fetchTransactions();
   };
 
-  // Depósitos / Anulações: entrada (depósito) ou saída (anulação) em uma conta
+  // Anulação de despesa também credita a conta (estorno), nunca debita
   const handleSaveDeposito = async () => {
     if (!currentBt || !depAccountId || !depValor || depValor === 0) return;
     setSavingTransfer(true);
     setTransferError(null);
     const valor = Math.abs(depValor);
-    const movimento = depKind === 'deposito' ? 'entrada' : 'saida';
     const descricao = depDescricao.trim() || (depKind === 'deposito' ? 'Depósito' : 'Anulação');
     const getSaldoAtual = async (accId: string): Promise<number> => {
       const { data: lastTx } = await supabase
@@ -419,7 +422,6 @@ export default function Movimentacao() {
     if (editingDep) {
       const { error } = await supabase.from('transactions').update({
         valor,
-        tipo_movimento: movimento,
         descricao,
         data_lancamento: depData || currentBt.data,
       }).eq('id', editingDep);
@@ -440,14 +442,12 @@ export default function Movimentacao() {
       return;
     }
     const saldoAnt = await getSaldoAtual(depAccountId);
-    const saldoFin = movimento === 'entrada'
-      ? toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber()
-      : toDecimal(saldoAnt).minus(toDecimal(valor)).toNumber();
+    const saldoFin = toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber();
     const { error } = await supabase.from('transactions').insert({
       bt_report_id: currentBt.id,
       account_id: depAccountId,
       descricao,
-      tipo_movimento: movimento,
+      tipo_movimento: 'entrada',
       valor,
       saldo_anterior: saldoAnt,
       saldo_final: saldoFin,
@@ -459,7 +459,7 @@ export default function Movimentacao() {
     if (!error) {
       setDepValor(null);
       setDepDescricao('');
-      setTransferFlash(depKind === 'deposito' ? 'Depósito registrado.' : 'Anulação registrada.');
+      setTransferFlash('Lançamento registrado e somado ao saldo da conta.');
       setTimeout(() => setTransferFlash(null), 3000);
       fetchTransactions();
     } else {
@@ -470,7 +470,7 @@ export default function Movimentacao() {
   const startEditDeposito = (tx: Transaction) => {
     setEditingDep(tx.id);
     setDepAccountId(tx.account_id);
-    setDepKind(tx.tipo_movimento === 'entrada' ? 'deposito' : 'anulacao');
+    setDepKind('deposito');
     setDepValor(tx.valor);
     setDepData(tx.data_lancamento || todayISO());
     setDepDescricao(tx.descricao);
@@ -486,6 +486,24 @@ export default function Movimentacao() {
     await recalcAccountSaldos(tx.account_id);
     fetchTransactions();
   };
+
+  // Migra anulações antigas gravadas como saída para entrada (estorno credita a conta)
+  const migrateOldAnulacoes = async () => {
+    const antigas = transactions.filter(t => t.tipo === 'deposito_anulacao' && t.tipo_movimento === 'saida');
+    for (const tx of antigas) {
+      await supabase.from('transactions').update({ tipo_movimento: 'entrada' }).eq('id', tx.id);
+    }
+    if (antigas.length > 0) {
+      const contas = new Set(antigas.map(t => t.account_id));
+      for (const accId of contas) await recalcAccountSaldos(accId);
+      fetchTransactions();
+    }
+  };
+
+  useEffect(() => {
+    migrateOldAnulacoes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions]);
 
   const depositos = useMemo(() =>
     transactions.filter(t => t.tipo === 'deposito_anulacao'),
@@ -604,7 +622,6 @@ export default function Movimentacao() {
               {activeAccounts.map(acc => {
                 const row = inputs[acc.id] || { vigente: '', restos_pagar: '', diversos_credores: '' };
                 const transf = transferenciasPorConta.get(acc.id) ?? 0;
-                const subtotal = getAccountSubtotal(acc.id) + transf;
                 const saldoFinal = getAccountSaldoFinal(acc.id);
                 const saldoAnterior = getAccountSaldoAnterior(acc.id);
                 return (
@@ -643,7 +660,7 @@ export default function Movimentacao() {
                       {formatCurrency(transf)}
                     </td>
                     <td className="px-4 py-2 text-right font-bold text-slate-700 bg-slate-50/50">
-                      {formatCurrency(subtotal)}
+                      {formatCurrency(getAccountSubtotal(acc.id))}
                     </td>
                     <td className="px-4 py-2 text-right font-bold text-slate-800 bg-blue-50/30">
                       {formatCurrency(saldoFinal)}
@@ -659,7 +676,7 @@ export default function Movimentacao() {
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.restos_pagar)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totaisPorColuna.diversos_credores)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalTransferencias)}</td>
-                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalGeral + totalTransferencias)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalGeral)}</td>
                 <td className="px-4 py-3 text-right text-slate-800">{formatCurrency(totalSaldoFinal)}</td>
               </tr>
             </tfoot>
@@ -903,12 +920,12 @@ export default function Movimentacao() {
                     >
                       <td className="px-3 py-2 text-slate-700">{accounts.find(a => a.id === d.account_id)?.nome ?? '—'}</td>
                       <td className="px-3 py-2 text-slate-700">
-                        <span className={`font-semibold ${d.tipo_movimento === 'entrada' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                          {d.tipo_movimento === 'entrada' ? 'Depósito' : 'Anulação'}
+                        <span className={`font-semibold ${d.descricao.toLowerCase().includes('anula') ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {d.descricao.toLowerCase().includes('anula') ? 'Anulação' : 'Depósito'}
                         </span>
                         <span className="text-slate-500"> · {formatDate(d.data_lancamento)} · {d.descricao}</span>
                       </td>
-                      <td className={`px-3 py-2 text-right font-semibold ${d.tipo_movimento === 'entrada' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      <td className={`px-3 py-2 text-right font-semibold ${d.descricao.toLowerCase().includes('anula') ? 'text-amber-700' : 'text-emerald-700'}`}>
                         {formatCurrency(d.valor)}
                       </td>
                       <td className="px-3 py-2">
