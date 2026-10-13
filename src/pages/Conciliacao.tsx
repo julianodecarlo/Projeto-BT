@@ -195,6 +195,11 @@ export default function Conciliacao() {
 
   const getPendencias = (accId: string) => pendenciasPorConta.get(accId) ?? 0;
 
+  // Tolerância zero: 1 centavo é divergência. Compara em centavos inteiros para eliminar ruído de ponto flutuante.
+  const isConciliado = (a: number, b: number): boolean =>
+    Math.round(a * 100) === Math.round(b * 100);
+  const toCentavos = (v: number): number => Math.round(v * 100) / 100;
+
   const handleNav = (e: React.KeyboardEvent<HTMLInputElement>, nextCell: string | null) => {
     if (e.key !== 'Tab' && e.key !== 'Enter') return;
     e.preventDefault();
@@ -296,8 +301,8 @@ export default function Conciliacao() {
     const pendencias = getPendencias(accId);
     const rendimento = field === 'rendimento_acumulado' ? value : (existing?.rendimento_acumulado ?? 0);
     const saldoExtrato = field === 'saldo_extrato' ? value : (existing?.saldo_extrato ?? 0);
-    const saldoConciliado = toDecimal(saldoExtrato).minus(toDecimal(rendimento)).minus(toDecimal(pendencias)).toNumber();
-    const divergente = Math.abs(toDecimal(saldoConciliado).minus(toDecimal(saldoOrcamentario)).minus(toDecimal(pendencias)).toNumber()) > 0.01;
+    const saldoConciliado = toCentavos(toDecimal(toCentavos(saldoExtrato)).minus(toDecimal(rendimento)).minus(toDecimal(pendencias)).toNumber());
+    const divergente = !isConciliado(saldoConciliado, saldoOrcamentario);
 
     if (existing) {
       const { data, error } = await supabase
@@ -353,7 +358,7 @@ export default function Conciliacao() {
     if (saldoExtrato === null || saldoExtrato === 0) return false;
     const rendimento = recon?.rendimento_acumulado ?? 0;
     const saldoConc = toDecimal(saldoExtrato).minus(toDecimal(rendimento)).minus(toDecimal(getPendencias(acc.id))).toNumber();
-    return Math.abs(toDecimal(saldoConc).minus(toDecimal(getAccountSaldoOrcamentario(acc.id))).toNumber()) > 0.01;
+    return !isConciliado(saldoConc, getAccountSaldoOrcamentario(acc.id));
   }).length;
   const totalConveniosPorConta = new Map<string, number>();
   for (const c of convenios) {
@@ -499,9 +504,9 @@ export default function Conciliacao() {
                 const saldoExtrato = recon?.saldo_extrato ?? null;
                 const rendimento = recon?.rendimento_acumulado ?? 0;
                 // Lado bancário (extrato - rendimentos - pendências) confrontado com o orçamentário
-                const saldoConc = toDecimal(saldoExtrato ?? 0).minus(toDecimal(rendimento)).minus(toDecimal(pend)).toNumber();
+                const saldoConc = toCentavos(toDecimal(toCentavos(saldoExtrato ?? 0)).minus(toDecimal(rendimento)).minus(toDecimal(pend)).toNumber());
                 const extratoVazio = saldoExtrato === null || saldoExtrato === 0;
-                const divergente = !extratoVazio && Math.abs(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).toNumber()) > 0.01;
+                const divergente = !extratoVazio && !isConciliado(saldoConc, saldoOrc);
                 return (
                   <tr key={acc.id} className="border-t border-slate-100">
                     <td className="px-4 py-2.5">
@@ -538,7 +543,7 @@ export default function Conciliacao() {
                         <div className="flex flex-col items-center gap-0.5">
                           <Badge color="red">Divergente</Badge>
                           <span className="text-[11px] font-semibold text-red-700">
-                            Dif: {formatCurrency(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).toNumber())}
+                            Dif: {formatCurrency(toCentavos(toDecimal(saldoConc).minus(toDecimal(saldoOrc)).toNumber()))}
                           </span>
                         </div>
                       ) : (
