@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileText, Download, Eye, FilePlus, Pencil } from 'lucide-react';
+import { FileText, Download, Eye, FilePlus, Pencil, Printer } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Badge, EmptyState } from '@/components/ui/Field';
@@ -18,6 +18,7 @@ export default function Relatorios({ onNavigate }: RelatoriosProps) {
   const [allBts, setAllBts] = useState<BtReport[]>([]);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState('');
+  const [previewBt, setPreviewBt] = useState<BtReport | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -43,7 +44,15 @@ export default function Relatorios({ onNavigate }: RelatoriosProps) {
     if (html) {
       setPreviewHtml(html);
       setPreviewTitle(`BT ${bt.numero} - ${formatDate(bt.data)}`);
+      setPreviewBt(bt);
     }
+  };
+
+  const handleDownloadFromPreview = async () => {
+    if (!previewBt) return;
+    setLoading(true);
+    await generateAndDownloadPdf(previewBt.id);
+    setLoading(false);
   };
 
   const handleEdit = (bt: BtReport) => {
@@ -98,7 +107,17 @@ export default function Relatorios({ onNavigate }: RelatoriosProps) {
       </Card>
 
       {/* Preview modal */}
-      <Modal open={!!previewHtml} onClose={() => setPreviewHtml(null)} title={previewTitle} maxWidth="max-w-4xl">
+      <Modal
+        open={!!previewHtml}
+        onClose={() => setPreviewHtml(null)}
+        title={previewTitle}
+        maxWidth="max-w-4xl"
+        headerActions={
+          <Button size="sm" onClick={handleDownloadFromPreview} disabled={loading}>
+            <Printer className="w-3.5 h-3.5" /> PDF
+          </Button>
+        }
+      >
         {previewHtml && (
           <iframe
             srcDoc={previewHtml}

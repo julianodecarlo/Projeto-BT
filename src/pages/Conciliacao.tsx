@@ -485,7 +485,7 @@ export default function Conciliacao() {
       <Card className="overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-800">Conciliação por Conta</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Conciliado quando Extrato − Rendimentos − Ajuste BB − Pendências = Saldo Orçamentário</p>
+          <p className="text-xs text-slate-500 mt-0.5">Conciliado quando Extrato − Rendimentos − Dif.Arred.Rend − Pendências = Saldo Orçamentário</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -495,7 +495,7 @@ export default function Conciliacao() {
                 <th className="px-4 py-2 text-right font-semibold">Saldo Orçamentário</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Extrato</th>
                 <th className="px-4 py-2 text-right font-semibold">Rendimentos Acum.</th>
-                <th className="px-2 py-2 text-center font-semibold" title="Compensação de arredondamento BB">Ajuste BB</th>
+                <th className="px-2 py-2 text-center font-semibold" title="Compensação de arredondamento de rendimentos">Dif.Arred.Rend</th>
                 <th className="px-4 py-2 text-right font-semibold">Pendências</th>
                 <th className="px-4 py-2 text-right font-semibold">Saldo Conciliado</th>
                 <th className="px-4 py-2 text-center font-semibold">Status</th>
@@ -577,14 +577,7 @@ export default function Conciliacao() {
                           </span>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <Badge color="green">Conciliado</Badge>
-                          {ajuste !== 0 && (
-                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">
-                              Ajuste BB de {formatCurrency(ajuste)} aplicado
-                            </span>
-                          )}
-                        </div>
+                        <Badge color="green">Conciliado</Badge>
                       )}
                     </td>
                   </tr>

@@ -106,17 +106,23 @@ export default function Fechamento() {
     detail: balanceOk ? 'Todos os saldos estão consistentes' : 'Há inconsistência nos saldos corridos',
   });
 
-  const divergentRecon = reconciliations.filter(r => r.divergente);
+  // Contas de convênio têm conciliação periódica: divergência nelas não impede o fechamento diário
+  const isContaConvenio = (accountId: string) =>
+    accounts.find(a => a.id === accountId)?.categoria === 'convenio';
+  const divergentRecon = reconciliations.filter(r => r.divergente && !isContaConvenio(r.account_id));
+  const divergentConvenios = reconciliations.filter(r => r.divergente && isContaConvenio(r.account_id));
   checks.push({
     label: 'Conciliação bancária sem divergências',
     passed: divergentRecon.length === 0,
     detail: divergentRecon.length === 0
-      ? `${reconciliations.length} conta(s) conciliada(s)`
+      ? divergentConvenios.length > 0
+        ? `Contas de movimento conciliadas · ${divergentConvenios.length} convênio(s) divergente(s) (conciliação periódica, não impede o fechamento)`
+        : `${reconciliations.length} conta(s) conciliada(s)`
       : `${divergentRecon.length} conta(s) com divergência`,
   });
 
   const accountsWithTx = new Set(transactions.map(t => t.account_id));
-  const accountsWithoutRecon = accounts.filter(a => a.ativo && accountsWithTx.has(a.id) && !reconciliations.find(r => r.account_id === a.id));
+  const accountsWithoutRecon = accounts.filter(a => a.ativo && accountsWithTx.has(a.id) && !isContaConvenio(a.id) && !reconciliations.find(r => r.account_id === a.id));
   checks.push({
     label: 'Todas as contas com movimento conciliadas',
     passed: accountsWithoutRecon.length === 0,

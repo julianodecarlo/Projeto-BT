@@ -105,18 +105,30 @@ export function generatePdfHtml(data: PdfData): string {
     `;
   }).join('');
 
-  // Cheques table
-  const chequeRows = cheques.length === 0
-    ? '<tr><td colspan="5" style="text-align:center;padding:12px;color:#94a3b8;">Nenhum cheque emitido</td></tr>'
-    : cheques.map(c => `
+  // Cheques table - agrupados por conta de origem
+  const chequeGroups = activeAccounts
+    .map(acc => ({ acc, rows: cheques.filter(c => c.account_id === acc.id) }))
+    .filter(g => g.rows.length > 0)
+    .map(g => `
       <tr>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${c.numero}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${c.beneficiario}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${formatDate(c.data_emissao)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(c.valor)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">${c.status === 'compensado' ? 'Compensado' : 'A Compensar'}</td>
+        <td colspan="6" style="padding:6px 10px;background:#f8fafc;font-weight:700;font-size:11px;color:#334155;text-transform:uppercase;letter-spacing:0.5px;">
+          Conta: ${g.acc.nome}${g.acc.codigo ? ` (${g.acc.codigo})` : ''} — ${g.rows.length} cheque(s)
+        </td>
       </tr>
+      ${g.rows.map(c => `
+        <tr>
+          <td style="padding:6px 10px 6px 22px;border-bottom:1px solid #f1f5f9;">${c.numero}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${g.acc.nome}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${c.beneficiario}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${formatDate(c.data_emissao)}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(c.valor)}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">${c.status === 'compensado' ? 'Compensado' : 'A Compensar'}</td>
+        </tr>
+      `).join('')}
     `).join('');
+  const chequeRows = cheques.length === 0
+    ? '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8;">Nenhum cheque emitido</td></tr>'
+    : chequeGroups;
 
   // Deposits table
   const depositRows = deposits.length === 0
@@ -192,8 +204,8 @@ export function generatePdfHtml(data: PdfData): string {
 </head>
 <body>
   <div class="header">
-    <h1>${bt.instituicao || 'UNIVERSIDADE ESTADUAL PAULISTA'}</h1>
-    <h2>${bt.unidade || 'INSTITUTO DE BIOCIÊNCIAS - CÂMPUS DE BOTUCATU'}</h2>
+    <h1>UNIVERSIDADE ESTADUAL PAULISTA</h1>
+    <h2>INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU</h2>
     <h3>Boletim de Tesouraria - Receita Própria</h3>
   </div>
 
@@ -252,6 +264,7 @@ export function generatePdfHtml(data: PdfData): string {
       <thead>
         <tr>
           <th>Número</th>
+          <th>Conta</th>
           <th>Beneficiário</th>
           <th>Data</th>
           <th style="text-align:right;">Valor</th>
@@ -261,7 +274,6 @@ export function generatePdfHtml(data: PdfData): string {
       <tbody>${chequeRows}</tbody>
     </table>
   </div>
-
   <div class="section">
     <div class="section-title">Depósitos Pendentes</div>
     <table>
