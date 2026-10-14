@@ -569,7 +569,6 @@ export default function Movimentacao() {
   }
 
   const activeAccounts = accounts.filter(a => a.ativo);
-  let tabIndex = 0;
 
   return (
     <>

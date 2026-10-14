@@ -3,9 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
-import { validarBtCentral, type PendenciaItem } from '@/lib/validacao';
+import { validarBtCentral as runValidacao, type PendenciaItem } from '@/lib/validacao';
+import { fetchValidacaoData } from '@/lib/btData';
 import type { BtReport, Account, Reconciliation } from '@/types';
-import Decimal from 'decimal.js';
 
 interface BtContextValue {
   currentBt: BtReport | null;
@@ -181,7 +181,8 @@ export function BtProvider({ children }: { children: ReactNode }) {
   const validarBtAtual = useCallback(async (): Promise<PendenciaItem[]> => {
     if (!currentBt) return [{ location: 'Sistema', message: 'Nenhum BT ativo.' }];
     await refreshBt();
-    const pend = await validarBtCentral(currentBt.id, accounts, reconciliations);
+    const data = await fetchValidacaoData(currentBt.id, accounts, reconciliations);
+    const pend = data ? runValidacao(data) : [{ location: 'Sistema', message: 'BT não encontrado.' }];
     if (pend.length === 0) {
       const { error } = await supabase
         .from('bt_reports')
@@ -198,7 +199,8 @@ export function BtProvider({ children }: { children: ReactNode }) {
   const fecharBtAtual = useCallback(async (): Promise<PendenciaItem[]> => {
     if (!currentBt) return [{ location: 'Sistema', message: 'Nenhum BT ativo.' }];
     await forceRecalcBtSaldos(currentBt, accounts as Account[]);
-    const pend = await validarBtCentral(currentBt.id, accounts, reconciliations);
+    const data = await fetchValidacaoData(currentBt.id, accounts, reconciliations);
+    const pend = data ? runValidacao(data) : [{ location: 'Sistema', message: 'BT não encontrado.' }];
     if (pend.length > 0) return pend;
     const { error } = await supabase
       .from('bt_reports')

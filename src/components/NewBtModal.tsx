@@ -20,7 +20,7 @@ export default function NewBtModal({ open, onClose, onCreated }: NewBtModalProps
   const [dataFim, setDataFim] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [bts, setBts] = useState<Pick<BtReport, 'numero'>[]>([]);
+  const [, setBts] = useState<Pick<BtReport, 'numero'>[]>([]);
 
   useEffect(() => {
     if (!open) return;

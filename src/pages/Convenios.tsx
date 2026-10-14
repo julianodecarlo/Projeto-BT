@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Trash2, Handshake, FileText, Pencil, X, Wallet } from 'lucide-react';
+import { Plus, Trash2, Handshake, FileText, Pencil, Wallet } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, EmptyState, Badge } from '@/components/ui/Field';

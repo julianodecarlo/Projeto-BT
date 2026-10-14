@@ -1,7 +1,15 @@
-import { supabase } from './supabase';
-import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from './format';
-import { getOpenItems } from './reconStatus';
-import type { BtReport, Account, Transaction, RevenueOwn, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
+import { fetchPdfData } from './btData';
+import { formatCurrency, formatDate, toNumber, sumDecimal } from './format';
+import type {
+  BtReport,
+  Account,
+  Transaction,
+  RevenueOwn,
+  Cheque,
+  DepositPending,
+  PaymentPending,
+  Reconciliation,
+} from '@/types';
 
 interface PdfData {
   bt: BtReport;
@@ -12,44 +20,6 @@ interface PdfData {
   deposits: DepositPending[];
   payments: PaymentPending[];
   reconciliations: Reconciliation[];
-}
-
-export async function fetchPdfData(btId: string): Promise<PdfData | null> {
-  const { data: bt } = await supabase.from('bt_reports').select('*').eq('id', btId).maybeSingle();
-  if (!bt) return null;
-  const [accountsRes, txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes, reconRes] = await Promise.all([
-    supabase.from('accounts').select('*').order('ordem'),
-    supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem'),
-    supabase.from('revenue_own').select('*').eq('bt_report_id', btId).order('ordem'),
-    supabase.from('cheques').select('*'),
-    supabase.from('deposits_pending').select('*'),
-    supabase.from('payments_pending').select('*'),
-    supabase.from('pendency_resolutions').select('*'),
-    supabase.from('bt_reports').select('id, data'),
-    supabase.from('reconciliation').select('*').eq('bt_report_id', btId),
-  ]);
-  // Mesma FOTO ESTÁTICA POR BT da aba Conciliação: pendências criadas até o BT
-  // e não baixadas em/antes dele.
-  const openItems = getOpenItems(
-    {
-      cheques: (cqRes.data || []) as Cheque[],
-      deposits: (dpRes.data || []) as DepositPending[],
-      payments: (payRes.data || []) as PaymentPending[],
-      resolutions: (resRes.data || []) as PendencyResolution[],
-    },
-    { id: bt.id, data: bt.data },
-    (btsRes.data || []) as Pick<BtReport, 'id' | 'data'>[]
-  );
-  return {
-    bt: bt as BtReport,
-    accounts: (accountsRes.data || []) as Account[],
-    transactions: (txRes.data || []) as Transaction[],
-    revenues: (revRes.data || []) as RevenueOwn[],
-    cheques: openItems.cheques,
-    deposits: openItems.deposits,
-    payments: openItems.payments,
-    reconciliations: (reconRes.data || []) as Reconciliation[],
-  };
 }
 
 export function generatePdfHtml(data: PdfData): string {

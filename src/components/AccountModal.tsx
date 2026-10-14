@@ -4,7 +4,7 @@ import { Button, Input, Field, Select } from './ui/Field';
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import type { Account, AccountCategory } from '@/types';
-import { Plus, Trash2, Pencil } from 'lucide-react';
+import { Trash2, Pencil } from 'lucide-react';
 import { MoneyInput } from './ui/MoneyInput';
 
 interface AccountModalProps {

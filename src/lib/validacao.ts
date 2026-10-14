@@ -1,17 +1,6 @@
-import { supabase } from './supabase';
 import { formatCurrency, toDecimal } from './format';
 import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from './reconStatus';
-import type {
-  BtReport,
-  Account,
-  Transaction,
-  RevenueOwn,
-  Cheque,
-  DepositPending,
-  PaymentPending,
-  PendencyResolution,
-  Reconciliation,
-} from '@/types';
+import type { ValidacaoData } from './btData';
 
 export interface PendenciaItem {
   location: string;
@@ -19,29 +8,12 @@ export interface PendenciaItem {
 }
 
 // FONTE ÚNICA DE VALIDAÇÃO DO BT (usada por Validar BT, Fechar BT e pelo
-// Fechamento Diário). Retorna a lista de pendências impeditivas; lista vazia
-// significa BT pronto para fechamento. Divergências em contas de convênio não
-// impedem o fechamento (conciliação periódica).
-export async function validarBtCentral(
-  btId: string,
-  accounts: Account[],
-  reconciliations: Reconciliation[]
-): Promise<PendenciaItem[]> {
-  const [btRes, txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = await Promise.all([
-    supabase.from('bt_reports').select('*').eq('id', btId).maybeSingle(),
-    supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem', { ascending: true }),
-    supabase.from('revenue_own').select('*').eq('bt_report_id', btId),
-    supabase.from('cheques').select('*'),
-    supabase.from('deposits_pending').select('*'),
-    supabase.from('payments_pending').select('*'),
-    supabase.from('pendency_resolutions').select('*'),
-    supabase.from('bt_reports').select('id, data'),
-  ]);
-  const bt = btRes.data as BtReport | null;
-  if (!bt) return [{ location: 'Sistema', message: 'BT não encontrado.' }];
-
-  const transactions = (txRes.data || []) as Transaction[];
-  const revenues = (revRes.data || []) as RevenueOwn[];
+// Fechamento Diário). Função PURA: recebe os dados já consolidados
+// (fetchValidacaoData em btData.ts é quem consulta o banco). Retorna a lista
+// de pendências impeditivas; lista vazia significa BT pronto para fechamento.
+// Divergências em contas de convênio não impedem o fechamento (conciliação periódica).
+export function validarBtCentral(data: ValidacaoData): PendenciaItem[] {
+  const { bt, accounts, transactions, revenues, cheques, deposits, payments, resolutions, allBts, reconciliations } = data;
 
   const pendencias: PendenciaItem[] = [];
 
@@ -66,19 +38,8 @@ export async function validarBtCentral(
   }
 
   // FOTO ESTÁTICA POR BT: pendências criadas até o BT e não baixadas em/antes dele.
-  const openItems = getOpenItems(
-    {
-      cheques: (cqRes.data || []) as Cheque[],
-      deposits: (dpRes.data || []) as DepositPending[],
-      payments: (payRes.data || []) as PaymentPending[],
-      resolutions: (resRes.data || []) as PendencyResolution[],
-    },
-    { id: bt.id, data: bt.data },
-    (btsRes.data || []) as Pick<BtReport, 'id' | 'data'>[]
-  );
+  const openItems = getOpenItems({ cheques, deposits, payments, resolutions }, { id: bt.id, data: bt.data }, allBts);
   const pendMap = pendenciasPorConta(openItems);
-
-  const activeAccounts = accounts.filter(a => a.ativo);
 
   // FONTE ÚNICA: exatamente a mesma função da aba Conciliação — o resultado é
   // idêntico ao badge (Conciliado/Divergente/Pendente + diferença exata).

@@ -23,7 +23,7 @@ interface PendingItem {
 type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
 
 export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey) => void }) {
-  const { currentBt, accounts, reconciliations, refreshReconciliations, refreshBt, cascadeRecalculate } = useBt();
+  const { currentBt, accounts, reconciliations, refreshBt, cascadeRecalculate } = useBt();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [revenues, setRevenues] = useState<RevenueOwn[]>([]);
   const [cheques, setCheques] = useState<Cheque[]>([]);

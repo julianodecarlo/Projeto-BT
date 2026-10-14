@@ -3,6 +3,7 @@ import { Plus, Trash2, CheckCircle, AlertTriangle, FileText, Handshake, Check, R
 import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, Badge, EmptyState } from '@/components/ui/Field';
+import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
 import { getOpenItems } from '@/lib/reconStatus';
@@ -10,73 +11,6 @@ import { getOpenItems } from '@/lib/reconStatus';
 type ResolutionKind = 'cheque' | 'deposito' | 'pagamento';
 
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
-
-interface MoneyInputProps {
-  value: number | null;
-  onValueChange: (value: number) => void;
-  className?: string;
-  placeholder?: string;
-  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-}
-
-const formatDigits = (digits: string): string => {
-  if (!digits) return '';
-  const cents = parseInt(digits, 10);
-  const intPart = Math.floor(cents / 100).toString();
-  const decPart = (cents % 100).toString().padStart(2, '0');
-  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${intFormatted},${decPart}`;
-};
-
-function MoneyInput({ value, onValueChange, className, placeholder, onKeyDown }: MoneyInputProps) {
-  const [display, setDisplay] = useState<string>('');
-  const [focused, setFocused] = useState(false);
-
-  const format = (digits: string, neg: boolean): string => {
-    if (!digits) return '';
-    const cents = parseInt(digits, 10);
-    const intPart = Math.floor(cents / 100).toString();
-    const decPart = (cents % 100).toString().padStart(2, '0');
-    const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    return `${neg ? '-' : ''}${intFormatted},${decPart}`;
-  };
-
-  const isNegative = (v: number | null | undefined): boolean => v != null && v < 0;
-  const centsFrom = (v: number | null | undefined): string =>
-    v != null && v !== 0 ? Math.round(Math.abs(v) * 100).toString() : '';
-
-  useEffect(() => {
-    if (!focused) {
-      setDisplay(format(centsFrom(value), isNegative(value)));
-    }
-  }, [value, focused]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const neg = e.target.value.trim().startsWith('-');
-    const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '');
-    setDisplay(format(digits, neg));
-    if (!digits) {
-      onValueChange(0);
-      return;
-    }
-    const abs = parseInt(digits, 10) / 100;
-    onValueChange(neg ? -abs : abs);
-  };
-
-  return (
-    <input
-      type="text"
-      inputMode="numeric"
-      value={display}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      onKeyDown={onKeyDown}
-      onChange={handleChange}
-      className={`text-right py-1.5 bg-blue-50/40 border border-blue-200 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 transition-all ${className || ''}`}
-      placeholder={placeholder}
-    />
-  );
-}
 
 export default function Conciliacao() {
   const { currentBt, accounts, refreshReconciliations } = useBt();

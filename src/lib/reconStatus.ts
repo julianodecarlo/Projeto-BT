@@ -87,8 +87,6 @@ export function getReconStatus(
   return { pendente: false, divergente, conciliado: !divergente, saldoConciliado: saldoConc };
 }
 
-import Decimal from 'decimal.js';
-
 // calcularStatusConciliacao — FONTE ÚNICA do status por conta, compartilhada
 // pela Conciliação Bancária, pelo Fechamento Diário e pela validação central
 // (botão Validar BT). Recebe o que as duas abas já têm em memória e devolve o
