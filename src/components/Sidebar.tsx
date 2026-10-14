@@ -45,10 +45,13 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
     const pend = await validarBtAtual();
     setSaving(false);
     if (pend.length > 0) {
+      // Modal (z-index global) APENAS quando há pendências que impedem o fechamento.
       setPendencias(pend);
       onNavigate('fechamento');
     } else {
-      showFeedback('Boletim validado sem pendências! Pronto para fechamento.');
+      // Sem pendências: nenhuma sobreposição — apenas Toast e navegação limpa.
+      showFeedback('Boletim validado com sucesso!');
+      onNavigate('fechamento');
     }
   };
 

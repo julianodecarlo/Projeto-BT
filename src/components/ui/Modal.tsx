@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
@@ -10,10 +11,15 @@ interface ModalProps {
   headerActions?: ReactNode;
 }
 
+// Renderizado via portal na raiz do documento: fica FORA da árvore da página
+// e do menu lateral, garantindo sobreposição global (z-[100]) acima de
+// qualquer card, tabela, input ou cabeçalho fixo. Ao fechar, o componente
+// deixa de ser renderizado — o backdrop sai por completo do DOM e a
+// interatividade do menu e das abas é restaurada 100%.
 export default function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg', headerActions }: ModalProps) {
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className={`relative bg-white rounded-xl shadow-2xl w-full ${maxWidth} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
@@ -27,6 +33,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
