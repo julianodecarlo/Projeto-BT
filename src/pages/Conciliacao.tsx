@@ -1,9 +1,23 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Plus, Trash2, CheckCircle, AlertTriangle, FileText, Handshake, Check, Receipt } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, Badge, EmptyState } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
+import {
+  fetchPendencyData,
+  listBtMeta,
+  listConvenios,
+  fetchReconciliations,
+  saveReconciliation,
+  resolvePendency,
+  addCheque as svcAddCheque,
+  deleteCheque as svcDeleteCheque,
+  addDeposit as svcAddDeposit,
+  deleteDeposit as svcDeleteDeposit,
+  addPayment as svcAddPayment,
+  deletePayment as svcDeletePayment,
+} from '@/services/reconciliationService';
+import { listTransactions } from '@/services/transactionService';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
 import { getOpenItems } from '@/lib/reconStatus';
@@ -46,24 +60,21 @@ export default function Conciliacao() {
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [chequesRes, depositsRes, paymentsRes, resolutionsRes, reconRes, txRes, convRes, btsRes] = await Promise.all([
-      supabase.from('cheques').select('*').order('data_emissao', { ascending: true }),
-      supabase.from('deposits_pending').select('*').order('created_at', { ascending: true }),
-      supabase.from('payments_pending').select('*').order('created_at', { ascending: true }),
-      supabase.from('pendency_resolutions').select('*'),
-      supabase.from('reconciliation').select('*').eq('bt_report_id', currentBt.id),
-      supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id).order('ordem', { ascending: true }),
-      supabase.from('convenios').select('*'),
-      supabase.from('bt_reports').select('id, data, status'),
+    const [pendency, recons, txs, conveniosData, btsMeta] = await Promise.all([
+      fetchPendencyData(),
+      fetchReconciliations(currentBt.id),
+      listTransactions(currentBt.id),
+      listConvenios(),
+      listBtMeta(),
     ]);
-    if (chequesRes.data) setCheques(chequesRes.data as Cheque[]);
-    if (depositsRes.data) setDeposits(depositsRes.data as DepositPending[]);
-    if (paymentsRes.data) setPayments(paymentsRes.data as PaymentPending[]);
-    if (resolutionsRes.data) setResolutions(resolutionsRes.data as PendencyResolution[]);
-    if (reconRes.data) setReconciliations(reconRes.data as Reconciliation[]);
-    if (txRes.data) setTransactions(txRes.data as Transaction[]);
-    if (convRes.data) setConvenios(convRes.data as Convenio[]);
-    if (btsRes.data) setAllBts(btsRes.data as BtReport[]);
+    setCheques(pendency.cheques);
+    setDeposits(pendency.deposits);
+    setPayments(pendency.payments);
+    setResolutions(pendency.resolutions);
+    setReconciliations(recons);
+    setTransactions(txs);
+    setConvenios(conveniosData);
+    setAllBts(btsMeta as BtReport[]);
   }, [currentBt]);
 
   useEffect(() => {
@@ -106,16 +117,9 @@ export default function Conciliacao() {
     // A baixa fica registrada no BT corrente (foto estática deste período).
     // O status permanente do registro original só é atualizado para auditoria;
     // fotos de BTs anteriores permanecem intactas.
-    const { data, error } = await supabase
-      .from('pendency_resolutions')
-      .insert({ kind, ref_id: refId, bt_report_id: currentBt.id })
-      .select()
-      .single();
-    if (error || !data) return;
-    setResolutions([...resolutions, data as PendencyResolution]);
-    const statusMap = { cheque: 'compensado', deposito: 'realizado', pagamento: 'pago' } as const;
-    const tableMap = { cheque: 'cheques', deposito: 'deposits_pending', pagamento: 'payments_pending' } as const;
-    await supabase.from(tableMap[kind]).update({ status: statusMap[kind] }).eq('id', refId);
+    const created = await resolvePendency(kind, refId, currentBt.id);
+    if (!created) return;
+    setResolutions([...resolutions, created]);
   };
 
   // Pendências por conta: (+ cheques a compensar + pagamentos pendentes - depósitos pendentes)
@@ -149,79 +153,67 @@ export default function Conciliacao() {
   // Cheques handlers
   const addCheque = async () => {
     if (!currentBt || !chequeAccountId || !chequeNumero.trim() || !chequeValor || !chequeBenef.trim()) return;
-    const { data, error } = await supabase
-      .from('cheques')
-      .insert({
-        bt_report_id: currentBt.id,
-        account_id: chequeAccountId,
-        data_emissao: currentBt.data,
-        numero: chequeNumero.trim(),
-        valor: toDecimal(chequeValor).toNumber(),
-        beneficiario: chequeBenef.trim(),
-        status: 'a_compensar',
-      })
-      .select()
-      .single();
-    if (!error && data) {
-      setCheques([...cheques, data as Cheque]);
+    const created = await svcAddCheque({
+      bt_report_id: currentBt.id,
+      account_id: chequeAccountId,
+      data_emissao: currentBt.data,
+      numero: chequeNumero.trim(),
+      valor: toDecimal(chequeValor).toNumber(),
+      beneficiario: chequeBenef.trim(),
+      status: 'a_compensar',
+    });
+    if (created) {
+      setCheques([...cheques, created]);
       setChequeNumero(''); setChequeValor(''); setChequeBenef('');
       setShowChequeForm(false);
     }
   };
 
-  const deleteCheque = async (id: string) => {
-    await supabase.from('cheques').delete().eq('id', id);
+  const removeCheque = async (id: string) => {
+    await svcDeleteCheque(id);
     setCheques(cheques.filter(c => c.id !== id));
   };
 
   // Deposit handlers
   const addDeposit = async () => {
     if (!currentBt || !depositAccountId || !depositValor) return;
-    const { data, error } = await supabase
-      .from('deposits_pending')
-      .insert({
-        bt_report_id: currentBt.id,
-        account_id: depositAccountId,
-        valor: toDecimal(depositValor).toNumber(),
-        descricao: depositDesc.trim() || null,
-      })
-      .select()
-      .single();
-    if (!error && data) {
-      setDeposits([...deposits, data as DepositPending]);
+    const created = await svcAddDeposit({
+      bt_report_id: currentBt.id,
+      account_id: depositAccountId,
+      valor: toDecimal(depositValor).toNumber(),
+      descricao: depositDesc.trim() || null,
+    });
+    if (created) {
+      setDeposits([...deposits, created]);
       setDepositValor(''); setDepositDesc('');
       setShowDepositForm(false);
     }
   };
 
-  const deleteDeposit = async (id: string) => {
-    await supabase.from('deposits_pending').delete().eq('id', id);
+  const removeDeposit = async (id: string) => {
+    await svcDeleteDeposit(id);
     setDeposits(deposits.filter(d => d.id !== id));
   };
 
   // Payment pending handlers
   const addPayment = async () => {
     if (!currentBt || !paymentAccountId || !paymentValor) return;
-    const { data, error } = await supabase
-      .from('payments_pending')
-      .insert({
-        bt_report_id: currentBt.id,
-        account_id: paymentAccountId,
-        valor: toDecimal(paymentValor).toNumber(),
-        data_lancamento: paymentData || currentBt.data,
-        descricao: paymentDesc.trim() || null,
-      })
-      .select()
-      .single();
-    if (!error && data) {
-      setPayments([...payments, data as PaymentPending]);
+    const created = await svcAddPayment({
+      bt_report_id: currentBt.id,
+      account_id: paymentAccountId,
+      valor: toDecimal(paymentValor).toNumber(),
+      data_lancamento: paymentData || currentBt.data,
+      descricao: paymentDesc.trim() || null,
+    });
+    if (created) {
+      setPayments([...payments, created]);
       setPaymentValor(''); setPaymentDesc('');
       setShowPaymentForm(false);
     }
   };
 
-  const deletePayment = async (id: string) => {
-    await supabase.from('payments_pending').delete().eq('id', id);
+  const removePayment = async (id: string) => {
+    await svcDeletePayment(id);
     setPayments(payments.filter(p => p.id !== id));
   };
 
@@ -240,43 +232,24 @@ export default function Conciliacao() {
     const saldoConciliado = toCentavos(toDecimal(toCentavos(saldoExtrato)).minus(toDecimal(rendimento)).minus(toDecimal(ajuste)).minus(toDecimal(pendencias)).toNumber());
     const divergente = !isConciliado(saldoConciliado, saldoOrcamentario);
 
-    if (existing) {
-      const { data, error } = await supabase
-        .from('reconciliation')
-        .update({
-          saldo_extrato: saldoExtrato,
-          rendimento_acumulado: rendimento,
-          ajuste_arredondamento: ajuste,
-          saldo_conciliado: saldoConciliado,
-          saldo_orcamentario: saldoOrcamentario,
-          divergente,
-        })
-        .eq('id', existing.id)
-        .select()
-        .single();
-      if (!error && data) {
-        setReconciliations(reconciliations.map(r => r.id === existing.id ? data as Reconciliation : r));
-        await refreshReconciliations();
-      }
-    } else {
-      const { data, error } = await supabase
-        .from('reconciliation')
-        .insert({
-          bt_report_id: currentBt.id,
-          account_id: accId,
-          saldo_extrato: saldoExtrato,
-          rendimento_acumulado: rendimento,
-          ajuste_arredondamento: ajuste,
-          saldo_conciliado: saldoConciliado,
-          saldo_orcamentario: saldoOrcamentario,
-          divergente,
-        })
-        .select()
-        .single();
-      if (!error && data) {
-        setReconciliations([...reconciliations, data as Reconciliation]);
-        await refreshReconciliations();
-      }
+    const saved = await saveReconciliation({
+      id: existing?.id,
+      btReportId: currentBt.id,
+      accountId: accId,
+      saldo_extrato: saldoExtrato,
+      rendimento_acumulado: rendimento,
+      ajuste_arredondamento: ajuste,
+      saldo_conciliado: saldoConciliado,
+      saldo_orcamentario: saldoOrcamentario,
+      divergente,
+    });
+    if (saved) {
+      setReconciliations(
+        existing
+          ? reconciliations.map(r => (r.id === existing.id ? saved : r))
+          : [...reconciliations, saved]
+      );
+      await refreshReconciliations();
     }
   };
 
@@ -347,7 +320,7 @@ export default function Conciliacao() {
                 </Button>
               </td>
               <td className="px-2 py-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => deleteCheque(cq.id)} className="text-slate-400 hover:text-red-500">
+                <button onClick={() => removeCheque(cq.id)} className="text-slate-400 hover:text-red-500">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </td>
@@ -625,7 +598,7 @@ export default function Conciliacao() {
                             </Button>
                           </td>
                           <td className="px-2 py-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => deleteDeposit(dp.id)} className="text-slate-400 hover:text-red-500">
+                            <button onClick={() => removeDeposit(dp.id)} className="text-slate-400 hover:text-red-500">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </td>
@@ -699,7 +672,7 @@ export default function Conciliacao() {
                           </Button>
                         </td>
                         <td className="px-2 py-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => deletePayment(p.id)} className="text-slate-400 hover:text-red-500">
+                          <button onClick={() => removePayment(p.id)} className="text-slate-400 hover:text-red-500">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>

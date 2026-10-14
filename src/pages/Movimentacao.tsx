@@ -1,7 +1,15 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X, ArrowDownToLine } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
+import {
+  listTransactions,
+  insertEntry,
+  insertTransferPair,
+  updateTransaction,
+  deleteTransaction,
+  deleteTransactions,
+  recalcAccountSaldos as svcRecalcAccountSaldos,
+} from '@/services/transactionService';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
@@ -43,15 +51,9 @@ export default function Movimentacao() {
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
-    const { data } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('bt_report_id', currentBt.id)
-      .order('ordem', { ascending: true });
-    if (data) {
-      setTransactions(data as Transaction[]);
-      buildInputState(data as Transaction[]);
-    }
+    const data = await listTransactions(currentBt.id);
+    setTransactions(data);
+    buildInputState(data);
   }, [currentBt]);
 
   const buildInputState = (txs: Transaction[]) => {
@@ -161,29 +163,29 @@ export default function Movimentacao() {
         if (v === 0) {
           // Campo esvaziado: remove a linha antiga (se existir)
           if (existing) {
-            await supabase.from('transactions').delete().eq('id', existing.id);
+            await deleteTransaction(existing.id);
           }
           continue;
         }
 
         if (existing) {
           if (existing.valor !== v) {
-            await supabase.from('transactions').update({ valor: v }).eq('id', existing.id);
+            await updateTransaction(existing.id, { valor: v });
           }
           saldoAnteriorMap[acc.id] = existing.saldo_final;
         } else {
           const saldoAnt = saldoAnteriorMap[acc.id];
           const saldoFin = toDecimal(saldoAnt).minus(v).toNumber();
-          await supabase.from('transactions').insert({
-            bt_report_id: currentBt.id,
-            account_id: acc.id,
+          await insertEntry({
+            btReportId: currentBt.id,
+            accountId: acc.id,
             descricao: entry.desc,
-            tipo_orcamento: entry.tipo,
-            tipo_movimento: 'saida',
+            tipoMovimento: 'saida',
             valor: v,
-            saldo_anterior: saldoAnt,
-            saldo_final: saldoFin,
-            data_lancamento: currentBt.data,
+            saldoAnterior: saldoAnt,
+            saldoFinal: saldoFin,
+            dataLancamento: currentBt.data,
+            tipoOrcamento: entry.tipo,
             ordem: ordem++,
           });
           saldoAnteriorMap[acc.id] = saldoFin;
@@ -203,26 +205,8 @@ export default function Movimentacao() {
   // Recria a cadeia saldo_anterior → saldo_final de uma conta após inserir, editar ou excluir lançamentos
   const recalcAccountSaldos = async (accId: string) => {
     if (!currentBt) return;
-    const { data: txs } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('bt_report_id', currentBt.id)
-      .eq('account_id', accId)
-      .order('ordem', { ascending: true });
-    if (!txs) return;
-    const rows = txs as Transaction[];
-    const opening = rows.find(t => t.descricao === 'Saldo Anterior');
-    let saldo = opening ? opening.saldo_anterior : (accounts.find(a => a.id === accId)?.saldo_inicial ?? 0);
-    for (const tx of rows) {
-      if (tx.descricao === 'Saldo Anterior') continue;
-      const fin = tx.tipo_movimento === 'entrada'
-        ? toDecimal(saldo).plus(toDecimal(tx.valor)).toNumber()
-        : toDecimal(saldo).minus(toDecimal(tx.valor)).toNumber();
-      if (tx.saldo_anterior !== saldo || tx.saldo_final !== fin) {
-        await supabase.from('transactions').update({ saldo_anterior: saldo, saldo_final: fin }).eq('id', tx.id);
-      }
-      saldo = fin;
-    }
+    const saldoInicial = accounts.find(a => a.id === accId)?.saldo_inicial ?? 0;
+    await svcRecalcAccountSaldos(currentBt.id, accId, saldoInicial);
   };
 
   const insertTransfer = async (
@@ -233,64 +217,15 @@ export default function Movimentacao() {
     descricao: string
   ): Promise<boolean> => {
     if (!currentBt || valor <= 0) return false;
-
-    const getSaldoAtual = async (accId: string): Promise<number> => {
-      const { data: lastTx } = await supabase
-        .from('transactions')
-        .select('saldo_final')
-        .eq('bt_report_id', currentBt.id)
-        .eq('account_id', accId)
-        .order('ordem', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (lastTx) return lastTx.saldo_final;
-      const { data: accData } = await supabase.from('accounts').select('saldo_inicial').eq('id', accId).maybeSingle();
-      return accData?.saldo_inicial ?? 0;
-    };
-
-    // Repasse: apenas credita a conta destino
-    if (!fromId && toId) {
-      const saldoAnt = await getSaldoAtual(toId);
-      const { error } = await supabase.from('transactions').insert({
-        bt_report_id: currentBt.id,
-        account_id: toId,
-        descricao,
-        tipo_movimento: 'entrada',
-        valor,
-        saldo_anterior: saldoAnt,
-        saldo_final: toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber(),
-        data_lancamento: currentBt.data,
-        tipo,
-      });
-      return !error;
-    }
-
-    if (!fromId || !toId) return false;
-    const saldoFrom = await getSaldoAtual(fromId);
-    const saldoTo = await getSaldoAtual(toId);
-    const { error: errFrom } = await supabase.from('transactions').insert({
-      bt_report_id: currentBt.id,
-      account_id: fromId,
-      descricao,
-      tipo_movimento: 'saida',
-      valor,
-      saldo_anterior: saldoFrom,
-      saldo_final: toDecimal(saldoFrom).minus(toDecimal(valor)).toNumber(),
-      data_lancamento: currentBt.data,
+    return insertTransferPair({
+      btReportId: currentBt.id,
+      dataLancamento: currentBt.data,
       tipo,
-    });
-    const { error: errTo } = await supabase.from('transactions').insert({
-      bt_report_id: currentBt.id,
-      account_id: toId,
-      descricao,
-      tipo_movimento: 'entrada',
+      fromId,
+      toId,
       valor,
-      saldo_anterior: saldoTo,
-      saldo_final: toDecimal(saldoTo).plus(toDecimal(valor)).toNumber(),
-      data_lancamento: currentBt.data,
-      tipo,
+      descricao,
     });
-    return !errFrom && !errTo;
   };
 
   const handleSaveRepasse = async () => {
@@ -303,10 +238,10 @@ export default function Movimentacao() {
     setSavingTransfer(true);
     setTransferError(null);
     if (editingRepasse) {
-      const { error } = await supabase.from('transactions').update({ valor: repasseValor }).eq('id', editingRepasse.id);
-      if (!error) await recalcAccountSaldos(tesouro.id);
+      const ok = await updateTransaction(editingRepasse.id, { valor: repasseValor });
+      if (ok) await recalcAccountSaldos(tesouro.id);
       setSavingTransfer(false);
-      if (!error) {
+      if (ok) {
         setEditingRepasse(null);
         setRepasseValor(null);
         setTransferFlash('Repasse atualizado.');
@@ -337,7 +272,7 @@ export default function Movimentacao() {
 
   const deleteRepasse = async (tx: Transaction) => {
     const tesouro = accounts.find(a => a.nome.toLowerCase().includes('tesouro'));
-    await supabase.from('transactions').delete().eq('id', tx.id);
+    await deleteTransaction(tx.id);
     if (editingRepasse?.id === tx.id) {
       setEditingRepasse(null);
       setRepasseValor(null);
@@ -364,7 +299,7 @@ export default function Movimentacao() {
     setTransferError(null);
     // Na edição, remove o par antigo antes de registrar o novo
     if (editingTransfer) {
-      await supabase.from('transactions').delete().in('id', editingTransfer.ids);
+      await deleteTransactions(editingTransfer.ids);
     }
     const valor = Math.abs(livreValor);
     const inverte = livreValor < 0;
@@ -409,7 +344,7 @@ export default function Movimentacao() {
 
   const deleteTransfer = async (p: { saida: Transaction; entrada: Transaction }) => {
     const ids = p.saida.id === p.entrada.id ? [p.saida.id] : [p.saida.id, p.entrada.id];
-    await supabase.from('transactions').delete().in('id', ids);
+    await deleteTransactions(ids);
     if (editingTransfer && ids.some(id => editingTransfer.ids.includes(id))) {
       setEditingTransfer(null);
       setLivreValor(null);
@@ -426,28 +361,15 @@ export default function Movimentacao() {
     setTransferError(null);
     const valor = Math.abs(depValor);
     const descricao = depDescricao.trim() || (depKind === 'deposito' ? 'Depósito' : 'Anulação');
-    const getSaldoAtual = async (accId: string): Promise<number> => {
-      const { data: lastTx } = await supabase
-        .from('transactions')
-        .select('saldo_final')
-        .eq('bt_report_id', currentBt.id)
-        .eq('account_id', accId)
-        .order('ordem', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (lastTx) return lastTx.saldo_final;
-      const { data: accData } = await supabase.from('accounts').select('saldo_inicial').eq('id', accId).maybeSingle();
-      return accData?.saldo_inicial ?? 0;
-    };
     if (editingDep) {
-      const { error } = await supabase.from('transactions').update({
+      const ok = await updateTransaction(editingDep, {
         valor,
         descricao,
         data_lancamento: depData || currentBt.data,
-      }).eq('id', editingDep);
-      if (!error) await recalcAccountSaldos(depAccountId);
+      });
+      if (!ok) await recalcAccountSaldos(depAccountId);
       setSavingTransfer(false);
-      if (!error) {
+      if (ok) {
         setEditingDep(null);
         setDepValor(null);
         setDepDescricao('');
@@ -461,22 +383,18 @@ export default function Movimentacao() {
       }
       return;
     }
-    const saldoAnt = await getSaldoAtual(depAccountId);
-    const saldoFin = toDecimal(saldoAnt).plus(toDecimal(valor)).toNumber();
-    const { error } = await supabase.from('transactions').insert({
-      bt_report_id: currentBt.id,
-      account_id: depAccountId,
+    const ok = await insertEntry({
+      btReportId: currentBt.id,
+      accountId: depAccountId,
       descricao,
-      tipo_movimento: 'entrada',
+      tipoMovimento: 'entrada',
       valor,
-      saldo_anterior: saldoAnt,
-      saldo_final: saldoFin,
-      data_lancamento: depData || currentBt.data,
+      dataLancamento: depData || currentBt.data,
       tipo: 'deposito_anulacao',
     });
-    if (!error) await recalcAccountSaldos(depAccountId);
+    if (ok) await recalcAccountSaldos(depAccountId);
     setSavingTransfer(false);
-    if (!error) {
+    if (ok) {
       setDepValor(null);
       setDepDescricao('');
       setTransferFlash('Lançamento registrado e somado ao saldo da conta.');
@@ -497,7 +415,7 @@ export default function Movimentacao() {
   };
 
   const deleteDeposito = async (tx: Transaction) => {
-    await supabase.from('transactions').delete().eq('id', tx.id);
+    await deleteTransaction(tx.id);
     if (editingDep === tx.id) {
       setEditingDep(null);
       setDepValor(null);
@@ -511,7 +429,7 @@ export default function Movimentacao() {
   const migrateOldAnulacoes = async () => {
     const antigas = transactions.filter(t => t.tipo === 'deposito_anulacao' && t.tipo_movimento === 'saida');
     for (const tx of antigas) {
-      await supabase.from('transactions').update({ tipo_movimento: 'entrada' }).eq('id', tx.id);
+      await updateTransaction(tx.id, { tipo_movimento: 'entrada' });
     }
     if (antigas.length > 0) {
       const contas = new Set(antigas.map(t => t.account_id));

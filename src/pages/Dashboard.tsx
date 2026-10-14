@@ -97,7 +97,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
       <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Boletim de Tesouraria</p>
+            <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">BT - Boletim de Tesouraria e Caixa</p>
             <h1 className="text-2xl font-bold mt-1">
               {currentBt ? `BT ${currentBt.numero}` : 'Nenhum BT ativo'}
             </h1>

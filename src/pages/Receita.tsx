@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Trash2, Layers, FileText, Pencil, X, Check, Handshake, Save, Lock, LockOpen, AlertTriangle } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, EmptyState } from '@/components/ui/Field';
 import Decimal from 'decimal.js';
@@ -9,6 +8,16 @@ import type { RevenueOwn, Subalinea } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import Modal from '@/components/ui/Modal';
+import {
+  listSubalinhas,
+  addSubalinea as svcAddSubalinea,
+  updateSubalinea,
+  deleteSubalinea,
+  listRevenues,
+  insertRevenueRows,
+  updateRevenue,
+  deleteRevenue,
+} from '@/services/revenueService';
 
 export default function Receita() {
   const { currentBt } = useBt();
@@ -25,15 +34,10 @@ export default function Receita() {
   const [editSubDesc, setEditSubDesc] = useState('');
 
   const fetchAll = useCallback(async () => {
-    const { data: subs } = await supabase.from('subalinhas').select('*').order('ordem');
-    if (subs) setSubalinhas(subs as Subalinea[]);
+    const subs = await listSubalinhas();
+    setSubalinhas(subs);
     if (currentBt) {
-      const { data: revs } = await supabase
-        .from('revenue_own')
-        .select('*')
-        .eq('bt_report_id', currentBt.id)
-        .order('ordem', { ascending: true });
-      if (revs) setRevenues(revs as RevenueOwn[]);
+      setRevenues(await listRevenues(currentBt.id));
     }
   }, [currentBt]);
 
@@ -44,12 +48,12 @@ export default function Receita() {
   const addSubalinea = async () => {
     if (!newSubCodigo.trim() || !newSubDesc.trim()) return;
     const maxOrdem = subalinhas.length > 0 ? Math.max(...subalinhas.map(s => s.ordem)) : 0;
-    const { data: sub } = await supabase.from('subalinhas').insert({
+    const sub = await svcAddSubalinea({
       codigo: newSubCodigo.trim(),
       descricao: newSubDesc.trim(),
       ordem: maxOrdem + 1,
       ativo: true,
-    }).select().single();
+    });
 
     // Incorpora a nova subalínea com saldo zero nas duas tabelas do BT ativo
     if (currentBt && sub) {
@@ -58,14 +62,13 @@ export default function Receita() {
         { bt_report_id: currentBt.id, subalinea: nome, tipo: 'contabil', saldo_anterior: 0, arrecadacao: 0, saldo_final_contabil: 0, caixa: 0, bancos: 0, saldo_final_financeiro: 0, account_id: null, ordem: 0 },
         { bt_report_id: currentBt.id, subalinea: nome, tipo: 'financeira', saldo_anterior: 0, arrecadacao: 0, saldo_final_contabil: 0, caixa: 0, bancos: 0, saldo_final_financeiro: 0, account_id: null, ordem: 0 },
       ];
-      const { data: revs, error } = await supabase.from('revenue_own').insert(rows).select();
-      if (!error && revs) setRevenues(prev => [...prev, ...(revs as RevenueOwn[])]);
+      const revs = await insertRevenueRows(rows);
+      if (revs.length > 0) setRevenues(prev => [...prev, ...revs]);
     }
 
     setNewSubCodigo(''); setNewSubDesc('');
     setShowSubForm(false);
-    const { data: subs } = await supabase.from('subalinhas').select('*').order('ordem');
-    if (subs) setSubalinhas(subs as Subalinea[]);
+    setSubalinhas(await listSubalinhas());
   };
 
   const startEditSub = (sub: Subalinea) => {
@@ -76,16 +79,16 @@ export default function Receita() {
 
   const saveEditSub = async () => {
     if (!editingSubId) return;
-    await supabase.from('subalinhas').update({
+    await updateSubalinea(editingSubId, {
       codigo: editSubCodigo.trim(),
       descricao: editSubDesc.trim(),
-    }).eq('id', editingSubId);
+    });
     setEditingSubId(null);
     fetchAll();
   };
 
-  const deleteSubalinea = async (id: string) => {
-    await supabase.from('subalinhas').delete().eq('id', id);
+  const removeSubalinea = async (id: string) => {
+    await deleteSubalinea(id);
     setSubalinhas(subalinhas.filter(s => s.id !== id));
   };
 
@@ -138,8 +141,8 @@ export default function Receita() {
       const payload = r.tipo === 'contabil'
         ? { saldo_anterior: eff.saldo_anterior, arrecadacao: eff.arrecadacao, saldo_final_contabil: eff.saldo_final_contabil }
         : { saldo_anterior: eff.saldo_anterior, caixa: eff.caixa, bancos: eff.bancos, saldo_final_financeiro: eff.saldo_final_financeiro };
-      const { data, error } = await supabase.from('revenue_own').update(payload).eq('id', id).select().single();
-      if (!error && data) setRevenues(prev => prev.map(x => (x.id === id ? (data as RevenueOwn) : x)));
+      const data = await updateRevenue(id, payload);
+      if (data) setRevenues(prev => prev.map(x => (x.id === id ? data : x)));
       else ok = false;
     }
     setCellEdits({});
@@ -149,8 +152,8 @@ export default function Receita() {
     showToast(ok ? 'Lançamentos salvos com sucesso' : 'Erro ao salvar alguns lançamentos. Tente novamente.');
   };
 
-  const deleteRevenue = async (id: string) => {
-    await supabase.from('revenue_own').delete().eq('id', id);
+  const removeRevenue = async (id: string) => {
+    await deleteRevenue(id);
     setRevenues(revenues.filter(r => r.id !== id));
   };
 
@@ -273,7 +276,7 @@ export default function Receita() {
                   <td className="px-2 py-1.5 text-right">{cellInput(r, 'bancos')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_financeiro)}</td>
                   <td className="px-2 py-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => deleteRevenue(r.id)} className="text-slate-400 hover:text-red-500">
+                    <button onClick={() => removeRevenue(r.id)} className="text-slate-400 hover:text-red-500">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </td>
@@ -328,7 +331,7 @@ export default function Receita() {
                   <td className="px-2 py-1.5 text-right">{cellInput(r, 'arrecadacao')}</td>
                   <td className="px-4 py-2.5 text-right font-bold text-slate-700">{formatCurrency(r.saldo_final_contabil)}</td>
                   <td className="px-2 py-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => deleteRevenue(r.id)} className="text-slate-400 hover:text-red-500">
+                    <button onClick={() => removeRevenue(r.id)} className="text-slate-400 hover:text-red-500">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </td>
@@ -456,7 +459,7 @@ export default function Receita() {
                       <button onClick={() => startEditSub(sub)} className="p-1 text-slate-400 hover:text-blue-600">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => deleteSubalinea(sub.id)} className="p-1 text-slate-400 hover:text-red-500">
+                      <button onClick={() => removeSubalinea(sub.id)} className="p-1 text-slate-400 hover:text-red-500">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>

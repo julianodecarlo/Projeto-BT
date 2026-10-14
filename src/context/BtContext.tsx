@@ -1,10 +1,19 @@
 import { createContext, useContext, useState, useEffect, type ReactNode, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
 import { validarBtCentral as runValidacao, type PendenciaItem } from '@/lib/validacao';
 import { fetchValidacaoData } from '@/lib/btData';
+import {
+  listAccounts,
+  fetchBt,
+  fetchLatestBt,
+  createBt as svcCreateBt,
+  updateBtFields,
+  setBtStatus,
+  deleteBt as svcDeleteBt,
+  listBtsFromData,
+} from '@/services/btService';
 import type { BtReport, Account, Reconciliation } from '@/types';
 
 interface BtContextValue {
@@ -65,27 +74,15 @@ export function BtProvider({ children }: { children: ReactNode }) {
     storeBt(bt);
   }, []);
 
-  const fetchAccounts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('accounts')
-      .select('*')
-      .order('ordem', { ascending: true });
-    if (!error && data) setAccounts(data as Account[]);
-  }, []);
-
   const refreshAccounts = useCallback(async () => {
-    await fetchAccounts();
-  }, [fetchAccounts]);
+    setAccounts(await listAccounts());
+  }, []);
 
   const refreshBt = useCallback(async () => {
     if (!currentBt) return;
-    const { data } = await supabase
-      .from('bt_reports')
-      .select('*')
-      .eq('id', currentBt.id)
-      .maybeSingle();
-    if (data) setCurrentBt(data as BtReport);
-  }, [currentBt]);
+    const bt = await fetchBt(currentBt.id);
+    if (bt) setCurrentBt(bt);
+  }, [currentBt, setCurrentBt]);
 
   // Fonte única das conciliações do BT ativo: o Fechamento escuta este estado
   // e reavalia as validações em tempo real quando uma conta é conciliada.
@@ -94,39 +91,17 @@ export function BtProvider({ children }: { children: ReactNode }) {
       setReconciliations([]);
       return;
     }
-    const { data } = await supabase
-      .from('reconciliation')
-      .select('*')
-      .eq('bt_report_id', currentBt.id);
-    setReconciliations((data || []) as Reconciliation[]);
+    const { fetchReconciliations } = await import('@/services/reconciliationService');
+    setReconciliations(await fetchReconciliations(currentBt.id));
   }, [currentBt]);
 
   useEffect(() => {
     refreshReconciliations();
   }, [refreshReconciliations]);
+
   const createBt = useCallback(async (numero: string, data: string, dataFim?: string | null): Promise<BtReport | null> => {
-    const { data: btData, error } = await supabase
-      .from('bt_reports')
-      .insert([
-        {
-          numero,
-          data,
-          data_fim: dataFim || null,
-          status: 'rascunho',
-          instituicao: 'UNIVERSIDADE ESTADUAL PAULISTA - CAMPUS DE BOTUCATU',
-          unidade: 'INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU - RECEITA PRÓPRIA',
-        },
-      ])
-      .select();
-
-    if (error) {
-      console.error('Error creating BT:', error.message || error);
-      return null;
-    }
-
-    if (!btData || btData.length === 0) return null;
-
-    const created = btData[0] as BtReport;
+    const created = await svcCreateBt(numero, data, dataFim);
+    if (!created) return null;
     try {
       await transposeSaldos(created);
     } catch (err) {
@@ -134,30 +109,17 @@ export function BtProvider({ children }: { children: ReactNode }) {
     }
     setCurrentBt(created);
     return created;
-  }, []);
+  }, [setCurrentBt]);
 
   const cascadeRecalculate = useCallback(async (fromBtId: string) => {
-    const { data: editedBt } = await supabase
-      .from('bt_reports')
-      .select('*')
-      .eq('id', fromBtId)
-      .maybeSingle();
+    const editedBt = await fetchBt(fromBtId);
     if (!editedBt) return;
-
-    const { data: subsequentBts } = await supabase
-      .from('bt_reports')
-      .select('*')
-      .gte('data', editedBt.data)
-      .order('data', { ascending: true });
-
-    if (!subsequentBts || subsequentBts.length === 0) return;
-
-    const { data: accs } = await supabase.from('accounts').select('*').order('ordem');
-    if (!accs) return;
-
+    const accs = await listAccounts();
+    if (accs.length === 0) return;
+    const subsequent = await listBtsFromData(editedBt.data);
     // Recalcula cada BT da cadeia com abertura = saldo final do BT anterior
-    for (const bt of subsequentBts as BtReport[]) {
-      await forceRecalcBtSaldos(bt, accs as Account[]);
+    for (const bt of subsequent) {
+      await forceRecalcBtSaldos(bt, accs);
     }
   }, []);
 
@@ -165,15 +127,9 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (!currentBt) return false;
     // Persistência geral: recalcula os saldos de todas as contas do BT a partir
     // do zero (sobrescreve rascunhos sem duplicar lançamentos).
-    await forceRecalcBtSaldos(currentBt, accounts as Account[]);
-    const { error } = await supabase
-      .from('bt_reports')
-      .update({ status: 'rascunho' })
-      .eq('id', currentBt.id);
-    if (error) {
-      console.error('Erro ao salvar BT:', error.message || error);
-      return false;
-    }
+    await forceRecalcBtSaldos(currentBt, accounts);
+    const ok = await setBtStatus(currentBt.id, 'rascunho');
+    if (!ok) return false;
     await refreshBt();
     return true;
   }, [currentBt, accounts, refreshBt]);
@@ -184,13 +140,8 @@ export function BtProvider({ children }: { children: ReactNode }) {
     const data = await fetchValidacaoData(currentBt.id, accounts, reconciliations);
     const pend = data ? runValidacao(data) : [{ location: 'Sistema', message: 'BT não encontrado.' }];
     if (pend.length === 0) {
-      const { error } = await supabase
-        .from('bt_reports')
-        .update({ status: 'validado' })
-        .eq('id', currentBt.id);
-      if (error) {
-        console.error('Erro ao marcar BT como validado:', error.message || error);
-      }
+      const ok = await setBtStatus(currentBt.id, 'validado');
+      if (!ok) console.error('Erro ao marcar BT como validado');
       await refreshBt();
     }
     return pend;
@@ -198,16 +149,12 @@ export function BtProvider({ children }: { children: ReactNode }) {
 
   const fecharBtAtual = useCallback(async (): Promise<PendenciaItem[]> => {
     if (!currentBt) return [{ location: 'Sistema', message: 'Nenhum BT ativo.' }];
-    await forceRecalcBtSaldos(currentBt, accounts as Account[]);
+    await forceRecalcBtSaldos(currentBt, accounts);
     const data = await fetchValidacaoData(currentBt.id, accounts, reconciliations);
     const pend = data ? runValidacao(data) : [{ location: 'Sistema', message: 'BT não encontrado.' }];
     if (pend.length > 0) return pend;
-    const { error } = await supabase
-      .from('bt_reports')
-      .update({ status: 'fechado' })
-      .eq('id', currentBt.id);
-    if (error) {
-      console.error('Erro ao fechar BT:', error.message || error);
+    const ok = await setBtStatus(currentBt.id, 'fechado');
+    if (!ok) {
       return [{ location: 'Sistema', message: 'Não foi possível fechar o BT. Tente novamente.' }];
     }
     await refreshBt();
@@ -215,44 +162,31 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, [currentBt, accounts, reconciliations, refreshBt]);
 
   const updateBt = useCallback(async (id: string, fields: { numero: string; data: string; data_fim: string | null }): Promise<boolean> => {
-    const { error } = await supabase.from('bt_reports').update(fields).eq('id', id);
-    if (error) {
-      console.error('Error updating BT:', error.message || error);
-      return false;
-    }
+    const ok = await updateBtFields(id, fields);
+    if (!ok) return false;
     await cascadeRecalculate(id);
     if (currentBt?.id === id) {
       setCurrentBt({ ...currentBt, ...fields });
     }
     return true;
-  }, [cascadeRecalculate, currentBt]);
+  }, [cascadeRecalculate, currentBt, setCurrentBt]);
 
   const reopenBt = useCallback(async (id: string): Promise<boolean> => {
-    const { error } = await supabase.from('bt_reports').update({ status: 'rascunho' }).eq('id', id);
-    if (error) {
-      console.error('Error reopening BT:', error.message || error);
-      return false;
-    }
+    const ok = await setBtStatus(id, 'rascunho');
+    if (!ok) return false;
     if (currentBt?.id === id) {
       setCurrentBt({ ...currentBt, status: 'rascunho' });
     }
     return true;
-  }, [currentBt]);
+  }, [currentBt, setCurrentBt]);
 
   const deleteBt = useCallback(async (id: string): Promise<boolean> => {
-    const { data: bt } = await supabase.from('bt_reports').select('data').eq('id', id).maybeSingle();
-    const { error } = await supabase.from('bt_reports').delete().eq('id', id);
-    if (error) {
-      console.error('Error deleting BT:', error.message || error);
-      return false;
-    }
+    const bt = await fetchBt(id);
+    const ok = await svcDeleteBt(id);
+    if (!ok) return false;
     if (bt) {
-      const { data: remaining } = await supabase
-        .from('bt_reports')
-        .select('id')
-        .gte('data', bt.data)
-        .order('data', { ascending: true });
-      for (const r of remaining || []) {
+      const remaining = await listBtsFromData(bt.data);
+      for (const r of remaining) {
         await cascadeRecalculate(r.id);
       }
     }
@@ -260,25 +194,20 @@ export function BtProvider({ children }: { children: ReactNode }) {
       setCurrentBt(null);
     }
     return true;
-  }, [cascadeRecalculate, currentBt]);
+  }, [cascadeRecalculate, currentBt, setCurrentBt]);
 
   useEffect(() => {
     (async () => {
       try {
         await seedDefaultAccounts();
-        await fetchAccounts();
-        const { data: lastBt } = await supabase
-          .from('bt_reports')
-          .select('*')
-          .order('data', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        await refreshAccounts();
+        const lastBt = await fetchLatestBt();
         if (lastBt) {
           // Re-sincronização forçada: recalcula do zero e sobrescreve os saldos
           // salvos no banco para todas as contas do BT ativo antes de qualquer aba renderizar
-          const { data: accs } = await supabase.from('accounts').select('*');
-          await forceRecalcBtSaldos(lastBt as BtReport, (accs || []) as Account[]);
-          setCurrentBt(lastBt as BtReport);
+          const accs = await listAccounts();
+          await forceRecalcBtSaldos(lastBt, accs);
+          setCurrentBt(lastBt);
         }
       } catch (err) {
         console.error('Erro ao inicializar BtProvider:', err);
@@ -286,10 +215,11 @@ export function BtProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     })();
-  }, [fetchAccounts]);
+  }, [refreshAccounts, setCurrentBt]);
 
   return (
     <BtContext.Provider value={{ currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate, salvarBtRascunho, validarBtAtual, fecharBtAtual }}>
       {children}
     </BtContext.Provider>
-  );}
+  );
+}

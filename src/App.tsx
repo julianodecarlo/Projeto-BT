@@ -12,13 +12,13 @@ import Fechamento from '@/pages/Fechamento';
 import Relatorios from '@/pages/Relatorios';
 
 const pageTitles: Record<PageKey, { title: string; subtitle: string }> = {
-  dashboard: { title: 'Visão Geral', subtitle: 'Painel de controle do Boletim de Tesouraria' },
+  dashboard: { title: 'Visão Geral', subtitle: 'Painel de controle do BT - Boletim de Tesouraria e Caixa' },
   receita: { title: 'Controle da Receita', subtitle: 'Subalíneas e Receitas Próprias (contábil e financeira)' },
   movimentacao: { title: 'Movimentações', subtitle: 'Registro de pagamentos e recebimentos por conta' },
   convenios: { title: 'Controle de Convênios', subtitle: 'Fontes orçamentárias 5/45/4/44 e vínculo financeiro' },
   conciliacao: { title: 'Conciliação Bancária', subtitle: 'Confronto entre saldo orçamentário e extrato bancário' },
   fechamento: { title: 'Fechamento Diário', subtitle: 'Validação e encerramento do BT' },
-  relatorios: { title: 'Relatórios e PDF', subtitle: 'Visualização e exportação de Boletins de Tesouraria' },
+  relatorios: { title: 'Relatórios e PDF', subtitle: 'Visualização e exportação de BTs - Boletim de Tesouraria e Caixa' },
 };
 
 function AppContent() {

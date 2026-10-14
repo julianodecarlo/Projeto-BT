@@ -76,7 +76,7 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
             <FileText className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-sm font-bold tracking-tight">Boletim de Tesouraria</h1>
+            <h1 className="text-sm font-bold tracking-tight">BT - Boletim de Tesouraria e Caixa</h1>
             <p className="text-[11px] text-slate-400">Controle Diário</p>
           </div>
         </div>

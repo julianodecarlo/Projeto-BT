@@ -197,7 +197,7 @@ export function generatePdfHtml(data: PdfData): string {
   <div class="header">
     <h1>UNIVERSIDADE ESTADUAL PAULISTA</h1>
     <h2>INSTITUTO DE BIOCIÊNCIAS CÂMPUS DE BOTUCATU</h2>
-    <h3>Boletim de Tesouraria - Receita Própria</h3>
+    <h3>BT - Boletim de Tesouraria e Caixa</h3>
   </div>
 
   <div class="bt-info">
