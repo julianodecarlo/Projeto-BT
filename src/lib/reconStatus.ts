@@ -114,19 +114,15 @@ export function calcularStatusConciliacao(params: {
   return accounts.filter(a => a.ativo).map(acc => {
     const recon = reconciliations.find(r => r.account_id === acc.id);
     const accTxs = transactions.filter(t => t.account_id === acc.id);
-    // SALDO FINAL ORÇAMENTÁRIO: âncora "Saldo Anterior" + entradas − saídas,
-    // independente da ordem das linhas (mesma fórmula das duas abas).
+    // MESMA leitura da aba Conciliação Bancária: o Saldo Orçamentário é o
+    // saldo final da ÚLTIMA linha da conta (corrente completa), que já incorpora
+    // transferências enviadas/recebidas, repasses, depósitos e as colunas
+    // orçamentárias. NUNCA re-somar por "âncora" aqui: quando o Saldo Anterior
+    // já reflete lançamentos gravados junto dele, a re-soma conta o valor em
+    // dobro e cria divergência fantasma (ex.: R$ 595,00 no lugar de R$ 70,00).
     let saldoOrc = acc.saldo_inicial;
     if (accTxs.length > 0) {
-      const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
-      let saldo = anchor ? anchor.saldo_anterior : acc.saldo_inicial;
-      for (const t of accTxs) {
-        if (t.descricao === 'Saldo Anterior') continue;
-        saldo = t.tipo_movimento === 'entrada'
-          ? new Decimal(saldo).plus(new Decimal(t.valor)).toNumber()
-          : new Decimal(saldo).minus(new Decimal(t.valor)).toNumber();
-      }
-      saldoOrc = saldo;
+      saldoOrc = accTxs[accTxs.length - 1].saldo_final;
     }
     const pend = pendMap.get(acc.id) ?? 0;
     const st = getReconStatus(recon, pend, saldoOrc);
