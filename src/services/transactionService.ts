@@ -67,46 +67,62 @@ export interface NewEntry {
 
 // Insere um lançamento aplicando SALDO FINAL = SALDO ANTERIOR ± VALOR.
 export async function insertEntry(e: NewEntry): Promise<boolean> {
-  const saldoAnt = e.saldoAnterior ?? (await currentSaldo(e.btReportId, e.accountId));
-  const saldoFin =
-    e.saldoFinal ??
-    (e.tipoMovimento === 'entrada'
-      ? toDecimal(saldoAnt).plus(e.valor)
-      : toDecimal(saldoAnt).minus(e.valor)
-    ).toNumber();
-  const { error } = await supabase.from('transactions').insert({
-    bt_report_id: e.btReportId,
-    account_id: e.accountId,
-    descricao: e.descricao,
-    tipo_movimento: e.tipoMovimento,
-    valor: e.valor,
-    saldo_anterior: saldoAnt,
-    saldo_final: saldoFin,
-    data_lancamento: e.dataLancamento,
-    tipo: e.tipo ?? null,
-    tipo_orcamento: e.tipoOrcamento ?? null,
-    ordem: e.ordem ?? null,
-  });
-  if (error) console.error('Erro ao inserir lançamento:', error.message || error);
-  return !error;
+  try {
+    const saldoAnt = e.saldoAnterior ?? (await currentSaldo(e.btReportId, e.accountId));
+    const saldoFin =
+      e.saldoFinal ??
+      (e.tipoMovimento === 'entrada'
+        ? toDecimal(saldoAnt).plus(e.valor)
+        : toDecimal(saldoAnt).minus(e.valor)
+      ).toNumber();
+    // Monta o payload omitindo propriedades ausentes: enviar null/undefined
+    // para colunas NOT NULL (ex.: ordem, data_lancamento) anula o valor padrão
+    // do banco e rejeita o insert com erro de constraint.
+    const payload: Record<string, unknown> = {
+      bt_report_id: e.btReportId,
+      account_id: e.accountId,
+      descricao: e.descricao,
+      tipo_movimento: e.tipoMovimento,
+      valor: e.valor,
+      saldo_anterior: saldoAnt,
+      saldo_final: saldoFin,
+    };
+    if (e.dataLancamento) payload.data_lancamento = e.dataLancamento;
+    if (e.tipo) payload.tipo = e.tipo;
+    if (e.tipoOrcamento) payload.tipo_orcamento = e.tipoOrcamento;
+    if (e.ordem != null) payload.ordem = e.ordem;
+    const { error } = await supabase.from('transactions').insert(payload);
+    if (error) console.error('Erro ao salvar movimentação:', error.message || error);
+    return !error;
+  } catch (error) {
+    console.error('Erro ao salvar movimentação:', error);
+    return false;
+  }
 }
 
 export async function updateTransaction(
   id: string,
   fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento'>>
 ): Promise<boolean> {
-  const { error } = await supabase.from('transactions').update(fields).eq('id', id);
-  if (error) console.error('Erro ao atualizar lançamento:', error.message || error);
-  return !error;
+  try {
+    const { error } = await supabase.from('transactions').update(fields).eq('id', id);
+    if (error) console.error('Erro ao atualizar movimentação:', error.message || error);
+    return !error;
+  } catch (error) {
+    console.error('Erro ao atualizar movimentação:', error);
+    return false;
+  }
 }
 
 export async function deleteTransaction(id: string): Promise<boolean> {
   const { error } = await supabase.from('transactions').delete().eq('id', id);
+  if (error) console.error('Erro ao excluir movimentação:', error.message || error);
   return !error;
 }
 
 export async function deleteTransactions(ids: string[]): Promise<boolean> {
   const { error } = await supabase.from('transactions').delete().in('id', ids);
+  if (error) console.error('Erro ao excluir movimentações:', error.message || error);
   return !error;
 }
 
