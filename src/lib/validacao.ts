@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { formatCurrency, toDecimal } from './format';
-import { getOpenItems, pendenciasPorConta, getReconStatus } from './reconStatus';
+import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from './reconStatus';
 import type {
   BtReport,
   Account,
@@ -79,45 +79,23 @@ export async function validarBtCentral(
   const pendMap = pendenciasPorConta(openItems);
 
   const activeAccounts = accounts.filter(a => a.ativo);
-  const isContaConvenio = (accountId: string) =>
-    accounts.find(a => a.id === accountId)?.categoria === 'convenio';
 
-  // SALDO FINAL ORÇAMENTÁRIO: âncora "Saldo Anterior" + entradas − saídas,
-  // independentemente da ordem das linhas.
-  const saldoOrcamentarioPorConta = (accId: string): number => {
-    const acc = accounts.find(a => a.id === accId);
-    const accTxs = transactions.filter(t => t.account_id === accId);
-    if (!acc || accTxs.length === 0) return acc?.saldo_inicial ?? 0;
-    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
-    let saldo = toDecimal(anchor ? anchor.saldo_anterior : acc.saldo_inicial);
-    for (const t of accTxs) {
-      if (t.descricao === 'Saldo Anterior') continue;
-      const v = toDecimal(t.valor);
-      saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
-    }
-    return saldo.toNumber();
-  };
+  // FONTE ÚNICA: exatamente a mesma função da aba Conciliação — o resultado é
+  // idêntico ao badge (Conciliado/Divergente/Pendente + diferença exata).
+  const statusPorConta = calcularStatusConciliacao({ accounts, transactions, reconciliations, pendMap });
 
   const accountsWithTx = new Set(transactions.map(t => t.account_id));
-  for (const acc of activeAccounts) {
-    const status = getReconStatus(
-      reconciliations.find(r => r.account_id === acc.id),
-      pendMap.get(acc.id) ?? 0,
-      saldoOrcamentarioPorConta(acc.id)
-    );
-    if (isContaConvenio(acc.id)) continue;
+  for (const x of statusPorConta) {
+    if (x.isConvenio) continue;
 
-    if (status.divergente) {
-      const dif = toDecimal(status.saldoConciliado)
-        .minus(toDecimal(saldoOrcamentarioPorConta(acc.id)))
-        .toNumber();
+    if (x.status === 'Divergente') {
       pendencias.push({
-        location: `Conciliação Bancária - Conta ${acc.nome ?? '—'}`,
-        message: `Saldo com divergência de ${formatCurrency(dif)} entre Extrato e BT.`,
+        location: `Conciliação Bancária - Conta ${x.acc.nome ?? '—'}`,
+        message: `Saldo com divergência de ${formatCurrency(x.dif)} entre Extrato e BT.`,
       });
-    } else if (status.pendente && accountsWithTx.has(acc.id)) {
+    } else if (x.status === 'Pendente' && accountsWithTx.has(x.acc.id)) {
       pendencias.push({
-        location: `Conciliação Bancária - Conta ${acc.nome}`,
+        location: `Conciliação Bancária - Conta ${x.acc.nome}`,
         message: 'Conta com movimento no BT sem conciliação registrada.',
       });
     }

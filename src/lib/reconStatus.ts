@@ -1,4 +1,4 @@
-import type { BtReport, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
+import type { BtReport, Account, Transaction, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
 
 // Fonte única de verdade do status de conciliação.
 // Conciliação Bancária e Fechamento Diário avaliam com esta MESMA fórmula ao vivo
@@ -85,4 +85,60 @@ export function getReconStatus(
   ) / 100;
   const divergente = Math.round(saldoConc * 100) !== Math.round(saldoOrcamentario * 100);
   return { pendente: false, divergente, conciliado: !divergente, saldoConciliado: saldoConc };
+}
+
+import Decimal from 'decimal.js';
+
+// calcularStatusConciliacao — FONTE ÚNICA do status por conta, compartilhada
+// pela Conciliação Bancária, pelo Fechamento Diário e pela validação central
+// (botão Validar BT). Recebe o que as duas abas já têm em memória e devolve o
+// MESMO status que aparece no badge da Conciliação: 'Conciliado', 'Divergente'
+// (com a diferença exata do badge) ou 'Pendente'.
+export interface StatusConta {
+  acc: Account;
+  recon: Reconciliation | undefined;
+  status: 'Conciliado' | 'Divergente' | 'Pendente';
+  dif: number;           // diferença exata mostrada no badge (saldoConciliado − saldoOrcamentário)
+  saldoConciliado: number;
+  saldoOrcamentario: number;
+  isConvenio: boolean;
+}
+
+export function calcularStatusConciliacao(params: {
+  accounts: Account[];
+  transactions: Transaction[];
+  reconciliations: Reconciliation[];
+  pendMap: Map<string, number>;
+}): StatusConta[] {
+  const { accounts, transactions, reconciliations, pendMap } = params;
+  return accounts.filter(a => a.ativo).map(acc => {
+    const recon = reconciliations.find(r => r.account_id === acc.id);
+    const accTxs = transactions.filter(t => t.account_id === acc.id);
+    // SALDO FINAL ORÇAMENTÁRIO: âncora "Saldo Anterior" + entradas − saídas,
+    // independente da ordem das linhas (mesma fórmula das duas abas).
+    let saldoOrc = acc.saldo_inicial;
+    if (accTxs.length > 0) {
+      const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
+      let saldo = anchor ? anchor.saldo_anterior : acc.saldo_inicial;
+      for (const t of accTxs) {
+        if (t.descricao === 'Saldo Anterior') continue;
+        saldo = t.tipo_movimento === 'entrada'
+          ? new Decimal(saldo).plus(new Decimal(t.valor)).toNumber()
+          : new Decimal(saldo).minus(new Decimal(t.valor)).toNumber();
+      }
+      saldoOrc = saldo;
+    }
+    const pend = pendMap.get(acc.id) ?? 0;
+    const st = getReconStatus(recon, pend, saldoOrc);
+    const label: StatusConta['status'] = st.pendente ? 'Pendente' : st.divergente ? 'Divergente' : 'Conciliado';
+    return {
+      acc,
+      recon,
+      status: label,
+      dif: Math.round((st.saldoConciliado - saldoOrc) * 100) / 100,
+      saldoConciliado: st.saldoConciliado,
+      saldoOrcamentario: saldoOrc,
+      isConvenio: acc.categoria === 'convenio',
+    };
+  });
 }

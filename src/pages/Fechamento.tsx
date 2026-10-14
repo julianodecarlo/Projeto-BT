@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
-import { getOpenItems, pendenciasPorConta, getReconStatus } from '@/lib/reconStatus';
+import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from '@/lib/reconStatus';
 import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending, PendencyResolution } from '@/types';
 
 interface ValidationCheck {
@@ -145,63 +145,34 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     detail: balanceOk ? 'Todos os saldos estão consistentes' : 'Há inconsistência nos saldos corridos',
   });
 
-  // Contas de convênio têm conciliação periódica: divergência nelas não impede o fechamento diário
-  const isContaConvenio = (accountId: string) =>
-    accounts.find(a => a.id === accountId)?.categoria === 'convenio';
-
-  // FOTO ESTÁTICA POR BT: o Fechamento lê apenas as pendências da foto deste
-  // BT — criadas até ele e não baixadas em/antes dele. Conciliações e baixas
-  // gravadas por BTs futuros não alteram a foto deste período.
+  // FONTE ÚNICA: status calculado pela MESMA função da aba Conciliação
+  // (calcularStatusConciliacao), sobre os objetos reconciliation do BtContext.
+  // Reativo: ao digitar Extrato/Rendimentos na Conciliação, o Fechamento
+  // reavalia instantaneamente porque reconciliations e openItems mudam.
   const openItems = getOpenItems(
     { cheques, deposits, payments, resolutions },
     { id: currentBt.id, data: currentBt.data },
     allBts
   );
   const pendMap = pendenciasPorConta(openItems);
+  const statusPorConta = calcularStatusConciliacao({ accounts, transactions, reconciliations, pendMap });
 
-  // SALDO FINAL ORÇAMENTÁRIO da conta neste BT, calculado de forma independente
-  // de ordem (âncora "Saldo Anterior" + somatório de entradas − somatório de
-  // saídas). É contra este valor que a Conciliação compara o Saldo Extrato.
-  const saldoOrcamentarioPorConta = (accId: string): number => {
-    const acc = accounts.find(a => a.id === accId);
-    const accTxs = transactions.filter(t => t.account_id === accId);
-    if (!acc || accTxs.length === 0) return acc?.saldo_inicial ?? 0;
-    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
-    let saldo = toDecimal(anchor ? anchor.saldo_anterior : acc.saldo_inicial);
-    for (const t of accTxs) {
-      if (t.descricao === 'Saldo Anterior') continue;
-      const v = toDecimal(t.valor);
-      saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
-    }
-    return saldo.toNumber();
-  };
-
-  const statusPorConta = accounts.filter(a => a.ativo).map(acc => ({
-    acc,
-    status: getReconStatus(
-      reconciliations.find(r => r.account_id === acc.id),
-      pendMap.get(acc.id) ?? 0,
-      saldoOrcamentarioPorConta(acc.id)
-    ),
-  }));
-
-  const divergentRecon = statusPorConta.filter(
-    x => x.status.divergente && !isContaConvenio(x.acc.id)
-  );
-  const divergentConvenios = statusPorConta.filter(
-    x => x.status.divergente && isContaConvenio(x.acc.id)
-  );
+  // Uma conta só entra no quadro de pendências se o badge atual da Conciliação
+  // for efetivamente 'Divergente' ou 'Pendente' (com movimento no BT).
   const accountsWithTx = new Set(transactions.map(t => t.account_id));
+  const divergentRecon = statusPorConta.filter(x => x.status === 'Divergente' && !x.isConvenio);
+  const divergentConvenios = statusPorConta.filter(x => x.status === 'Divergente' && x.isConvenio);
   const accountsWithoutRecon = statusPorConta.filter(
-    x => x.status.pendente && accountsWithTx.has(x.acc.id) && !isContaConvenio(x.acc.id)
+    x => x.status === 'Pendente' && accountsWithTx.has(x.acc.id) && !x.isConvenio
   );
+  const conciliacaoOk = divergentRecon.length === 0 && accountsWithoutRecon.length === 0;
   checks.push({
     label: 'Conciliação bancária sem divergências',
-    passed: divergentRecon.length === 0 && accountsWithoutRecon.length === 0,
-    detail: divergentRecon.length === 0 && accountsWithoutRecon.length === 0
+    passed: conciliacaoOk,
+    detail: conciliacaoOk
       ? divergentConvenios.length > 0
         ? `Contas de movimento conciliadas · ${divergentConvenios.length} convênio(s) divergente(s) (conciliação periódica, não impede o fechamento)`
-        : `${reconciliations.length} conta(s) conciliada(s)`
+        : 'Todas as contas ativas conciliadas'
       : [
           divergentRecon.length > 0 ? `${divergentRecon.length} conta(s) com divergência` : '',
           accountsWithoutRecon.length > 0 ? `${accountsWithoutRecon.length} conta(s) sem conciliação` : '',
@@ -233,13 +204,13 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const allPassed = checks.every(c => c.passed);
   const isFechado = currentBt.status === 'fechado';
 
-  // Lista detalhada de pendências com localização e atalho de navegação
+  // Lista detalhada de pendências com localização e atalho de navegação.
+  // A diferença exibida é EXATAMENTE a do badge da Conciliação (x.dif).
   const pendingItems: PendingItem[] = [];
   for (const x of divergentRecon) {
-    const dif = toDecimal(x.status.saldoConciliado).minus(toDecimal(saldoOrcamentarioPorConta(x.acc.id))).toNumber();
     pendingItems.push({
       location: `Conciliação Bancária - Conta ${x.acc.nome ?? '—'}`,
-      message: `Saldo com divergência de ${formatCurrency(dif)} entre Extrato e BT.`,
+      message: `Saldo com divergência de ${formatCurrency(x.dif)} entre Extrato e BT.`,
       goTo: 'conciliacao',
       goToLabel: 'Ir para Conciliação',
     });
