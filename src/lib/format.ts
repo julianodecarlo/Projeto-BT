@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import type { Account, Transaction } from '@/types';
 
 export function formatCurrency(value: number | null | undefined): string {
   const v = value ?? 0;
@@ -59,4 +60,30 @@ export function sum(values: (number | null | undefined)[]): number {
 
 export function sumDecimal(values: (number | string | null | undefined)[]): Decimal {
   return values.reduce((acc, v) => acc.plus(toDecimal(v)), new Decimal(0));
+}
+
+// Rotulagem oficial do campo 'TIPO' nos extratos do BT (tela e PDF).
+// 'Orçamento Vigente', 'Restos a Pagar' e 'Diversos Credores' se aplicam
+// EXCLUSIVAMENTE à liquidação de pagamentos/despesas orçamentárias.
+// Transferências entre contas, repasses, aberturas de saldo, a Conta Diárias
+// (execução exclusiva de Orçamento Vigente) e as Contas de Convênio NUNCA
+// recebem rótulo de categoria orçamentária.
+export function rotuloTipoLancamento(
+  t: Pick<Transaction, 'descricao' | 'tipo' | 'tipo_orcamento'>,
+  categoria?: Account['categoria']
+): string {
+  if (t.descricao === 'Saldo Anterior') return 'Saldo Inicial';
+  if (t.tipo === 'repasse_reitoria') return 'Repasse da Reitoria';
+  if (t.tipo === 'transf_livre' || t.tipo === 'transf_tesouro_receita' || t.tipo === 'transf_tesouro_diarias') {
+    return 'Transf. entre Contas';
+  }
+  if (t.tipo === 'deposito_anulacao') {
+    return t.descricao.toLowerCase().includes('anula') ? 'Anulação de Despesa' : 'Depósito';
+  }
+  if (categoria === 'convenio') return 'Conta Convênio';
+  if (categoria === 'diarias') return 'Orçamento Vigente';
+  if (t.tipo_orcamento === 'vigente') return 'Orçamento Vigente';
+  if (t.tipo_orcamento === 'restos_pagar') return 'Restos a Pagar';
+  if (t.tipo_orcamento === 'diversos_credores') return 'Diversos Credores';
+  return 'Movimento';
 }

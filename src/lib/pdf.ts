@@ -1,5 +1,6 @@
 import { fetchPdfData } from './btData';
-import { formatCurrency, formatDate, toNumber, sumDecimal } from './format';
+import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento } from './format';
+import { calcularStatusConciliacao, pendenciasPorConta } from './reconStatus';
 import type {
   BtReport,
   Account,
@@ -23,7 +24,7 @@ interface PdfData {
 }
 
 export function generatePdfHtml(data: PdfData): string {
-  const { bt, accounts, transactions, revenues, cheques, deposits, reconciliations } = data;
+  const { bt, accounts, transactions, revenues, cheques, deposits, payments, reconciliations } = data;
 
   const activeAccounts = accounts.filter(a => a.ativo);
   const revContabil = revenues.filter(r => r.tipo === 'contabil');
@@ -41,7 +42,7 @@ export function generatePdfHtml(data: PdfData): string {
       : accTxs.map(t => `
         <tr>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${t.descricao}</td>
-          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#64748b;">${t.tipo_orcamento === 'vigente' ? 'Vigente' : t.tipo_orcamento === 'restos_pagar' ? 'Restos a Pagar' : 'Diversos Credores'}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#64748b;">${rotuloTipoLancamento(t, acc.categoria)}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;">
             ${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.valor)}
           </td>
@@ -70,27 +71,28 @@ export function generatePdfHtml(data: PdfData): string {
     `;
   }).join('');
 
-  // Reconciliation table
-  const reconRows = activeAccounts.map(acc => {
-    const recon = reconciliations.find(r => r.account_id === acc.id);
-    const saldoOrc = transactions.filter(t => t.account_id === acc.id).length > 0
-      ? transactions.filter(t => t.account_id === acc.id).slice(-1)[0].saldo_final
-      : acc.saldo_inicial;
+  // Conciliação Bancária — FONTE ÚNICA: a MESMA função da aba Conciliação
+  // (calcularStatusConciliacao) calcula Saldo Conciliado e Status, garantindo
+  // que o PDF espelhe exatamente a tela. Fórmula aplicada:
+  // Saldo Conciliado = Saldo Extrato − Rendimentos − Dif.Arred.Rend − Pendências
+  const pendMap = pendenciasPorConta({ cheques, deposits, payments });
+  const statusPorConta = calcularStatusConciliacao({ accounts, transactions, reconciliations, pendMap });
+  const reconRows = statusPorConta.map(x => {
+    const statusHtml = x.status === 'Conciliado'
+      ? '<span style="color:#059669;font-weight:600;">Conciliado</span>'
+      : x.status === 'Divergente'
+        ? `<span style="color:#dc2626;font-weight:600;">Divergente${x.dif !== 0 ? ` (Dif: ${formatCurrency(x.dif)})` : ''}</span>`
+        : '<span style="color:#94a3b8;">Pendente</span>';
     return `
       <tr>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${acc.nome}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(saldoOrc)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(recon?.saldo_extrato ?? 0)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(recon?.rendimento_acumulado ?? 0)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;">${formatCurrency(recon?.saldo_conciliado ?? 0)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">
-          ${!recon || (recon.saldo_extrato === 0 && recon.rendimento_acumulado === 0)
-            ? '<span style="color:#94a3b8;">Pendente</span>'
-            : recon.divergente
-              ? '<span style="color:#dc2626;font-weight:600;">Divergente</span>'
-              : '<span style="color:#059669;font-weight:600;">OK</span>'
-          }
-        </td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${x.acc.nome}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(x.saldoOrcamentario)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(x.recon?.saldo_extrato ?? 0)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(x.recon?.rendimento_acumulado ?? 0)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(x.recon?.ajuste_arredondamento ?? 0)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(pendMap.get(x.acc.id) ?? 0)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;">${formatCurrency(x.saldoConciliado)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">${statusHtml}</td>
       </tr>
     `;
   }).join('');
@@ -232,22 +234,24 @@ export function generatePdfHtml(data: PdfData): string {
     ${accountSections}
   </div>
 
-  <div class="section">
-    <div class="section-title">Conciliação Bancária</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Conta</th>
-          <th style="text-align:right;">Saldo Orçamentário</th>
-          <th style="text-align:right;">Saldo Extrato</th>
-          <th style="text-align:right;">Rendimentos</th>
-          <th style="text-align:right;">Saldo Conciliado</th>
-          <th style="text-align:center;">Status</th>
-        </tr>
-      </thead>
-      <tbody>${reconRows}</tbody>
-    </table>
-  </div>
+    <div class="section">
+      <div class="section-title">Conciliação Bancária</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Conta</th>
+            <th style="text-align:right;">Saldo Orçamentário</th>
+            <th style="text-align:right;">Saldo Extrato</th>
+            <th style="text-align:right;">Rendimentos</th>
+            <th style="text-align:right;">Dif.Arred.Rend</th>
+            <th style="text-align:right;">Pendências</th>
+            <th style="text-align:right;">Saldo Conciliado</th>
+            <th style="text-align:center;">Status</th>
+          </tr>
+        </thead>
+        <tbody>${reconRows}</tbody>
+      </table>
+    </div>
 
   <div class="section">
     <div class="section-title">Cheques a Compensar</div>
