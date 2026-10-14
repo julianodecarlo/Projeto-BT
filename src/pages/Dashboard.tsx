@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Wallet, FileText, ArrowRight, Calendar, Settings, Pencil, List, Package } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Badge, Button } from '@/components/ui/Field';
 import { formatCurrency, formatDate, sumDecimal, toNumber } from '@/lib/format';
@@ -12,6 +11,8 @@ import AllBtsModal from '@/components/AllBtsModal';
 import { BackupRestoreSection } from '@/components/BackupRestore';
 import Modal from '@/components/ui/Modal';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
+import { listRecentBts } from '@/services/btService';
+import { listTransactions } from '@/services/transactionService';
 
 interface DashboardProps {
   onNavigate: (page: PageKey) => void;
@@ -29,20 +30,12 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
 
   useEffect(() => {
     (async () => {
-      const { data: bts } = await supabase
-        .from('bt_reports')
-        .select('*')
-        .order('data', { ascending: false })
-        .limit(10);
-      if (bts) setRecentBts(bts as BtReport[]);
-      if (currentBt) {
-        const { data: txs } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('bt_report_id', currentBt.id)
-          .order('ordem', { ascending: true });
-        if (txs) setTransactions(txs as Transaction[]);
-      }
+      const [bts, txs] = await Promise.all([
+        listRecentBts(10),
+        currentBt ? listTransactions(currentBt.id) : Promise.resolve([]),
+      ]);
+      setRecentBts(bts);
+      setTransactions(txs);
     })();
   }, [currentBt, refreshKey]);
 

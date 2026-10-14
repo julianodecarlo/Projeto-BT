@@ -2,15 +2,15 @@ import { supabase } from '@/lib/supabase';
 import type {
   BtReport,
   Cheque,
-  Convenio,
   DepositPending,
   PaymentPending,
   PendencyResolution,
   Reconciliation,
 } from '@/types';
 
-// Fonte única do cálculo de pendências abertas por BT (foto estática).
+// Fonte única de pendências abertas por BT (foto estática) e status de conciliação.
 export { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from '@/lib/reconStatus';
+export { listConvenios } from '@/services/convenioService';
 
 export interface PendencyData {
   cheques: Cheque[];
@@ -37,11 +37,6 @@ export async function fetchPendencyData(): Promise<PendencyData> {
 export async function listBtMeta(): Promise<Pick<BtReport, 'id' | 'data' | 'status'>[]> {
   const { data } = await supabase.from('bt_reports').select('id, data, status');
   return (data as Pick<BtReport, 'id' | 'data' | 'status'>[]) || [];
-}
-
-export async function listConvenios(): Promise<Convenio[]> {
-  const { data } = await supabase.from('convenios').select('*').order('nome');
-  return (data as Convenio[]) || [];
 }
 
 export async function fetchReconciliations(btId: string): Promise<Reconciliation[]> {

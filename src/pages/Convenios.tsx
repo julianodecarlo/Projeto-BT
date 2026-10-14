@@ -1,12 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Trash2, Handshake, FileText, Pencil, Wallet } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, EmptyState, Badge } from '@/components/ui/Field';
 import { formatCurrency, toDecimal } from '@/lib/format';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { MoneyInput } from '@/components/ui/MoneyInput';
+import {
+  listConvenios,
+  createConvenio,
+  updateConvenio,
+  deleteConvenio,
+  type ConvenioInput,
+} from '@/services/convenioService';
 
 const FONTES = [
   { key: 'fonte_5' as const, label: 'Convênio (Fonte 5)' },
@@ -31,8 +37,7 @@ export default function Convenios() {
   const [saving, setSaving] = useState(false);
 
   const fetchConvenios = useCallback(async () => {
-    const { data } = await supabase.from('convenios').select('*').order('nome');
-    if (data) setConvenios(data as Convenio[]);
+    setConvenios(await listConvenios());
   }, []);
 
   useEffect(() => {
@@ -73,7 +78,7 @@ export default function Convenios() {
   const handleSave = async () => {
     if (!nome.trim()) return;
     setSaving(true);
-    const payload = {
+    const payload: ConvenioInput = {
       nome: nome.trim(),
       fonte_5: toDecimal(fontes.fonte_5 || 0).toNumber(),
       fonte_45: toDecimal(fontes.fonte_45 || 0).toNumber(),
@@ -82,9 +87,9 @@ export default function Convenios() {
       finance_account_id: financeAccountId || null,
     };
     if (editing) {
-      await supabase.from('convenios').update(payload).eq('id', editing.id);
+      await updateConvenio(editing.id, payload);
     } else {
-      await supabase.from('convenios').insert(payload);
+      await createConvenio(payload);
     }
     await fetchConvenios();
     setSaving(false);
@@ -92,7 +97,7 @@ export default function Convenios() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('convenios').delete().eq('id', id);
+    await deleteConvenio(id);
     setConvenios(convenios.filter(c => c.id !== id));
   };
 

@@ -26,6 +26,15 @@ export async function listBts(): Promise<BtReport[]> {
   return (data as BtReport[]) || [];
 }
 
+export async function listRecentBts(limit: number): Promise<BtReport[]> {
+  const { data } = await supabase
+    .from('bt_reports')
+    .select('*')
+    .order('data', { ascending: false })
+    .limit(limit);
+  return (data as BtReport[]) || [];
+}
+
 // Cadeia de recálculo em cascata: todos os BTs de data igual ou posterior.
 export async function listBtsFromData(data: string): Promise<BtReport[]> {
   const { data: rows } = await supabase
@@ -76,4 +85,29 @@ export async function deleteBt(id: string): Promise<boolean> {
   const { error } = await supabase.from('bt_reports').delete().eq('id', id);
   if (error) console.error('Error deleting BT:', error.message || error);
   return !error;
+}
+
+export interface SignatureFields {
+  elaborado_por: string | null;
+  cargo_elaborado: string | null;
+  conferido_por: string | null;
+  cargo_conferido: string | null;
+}
+
+export async function updateBtSignatures(id: string, fields: SignatureFields): Promise<boolean> {
+  const { error } = await supabase.from('bt_reports').update(fields).eq('id', id);
+  if (error) console.error('Error updating BT signatures:', error.message || error);
+  return !error;
+}
+
+// BT imediatamente anterior (por data) — usado para herdar assinaturas.
+export async function fetchBtBefore(data: string): Promise<BtReport | null> {
+  const { data: row } = await supabase
+    .from('bt_reports')
+    .select('*')
+    .lt('data', data)
+    .order('data', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (row as BtReport) || null;
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { FileText, Download, Eye, FilePlus, Pencil, Printer } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Badge, EmptyState } from '@/components/ui/Field';
 import { formatDate } from '@/lib/format';
@@ -8,6 +7,7 @@ import { generateAndDownloadPdf, previewPdf } from '@/lib/pdf';
 import type { BtReport } from '@/types';
 import Modal from '@/components/ui/Modal';
 import type { PageKey } from '@/components/Sidebar';
+import { listBts } from '@/services/btService';
 
 interface RelatoriosProps {
   onNavigate?: (page: PageKey) => void;
@@ -23,11 +23,7 @@ export default function Relatorios({ onNavigate }: RelatoriosProps) {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from('bt_reports')
-        .select('*')
-        .order('data', { ascending: false });
-      if (data) setAllBts(data as BtReport[]);
+      setAllBts(await listBts());
     })();
   }, [currentBt]);
 

@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck, ArrowRight } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
 import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from '@/lib/reconStatus';
 import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending, PendencyResolution } from '@/types';
+import { listTransactions } from '@/services/transactionService';
+import { listRevenues } from '@/services/revenueService';
+import { fetchPendencyData, listBtMeta } from '@/services/reconciliationService';
+import { fetchBtBefore, updateBtSignatures, setBtStatus } from '@/services/btService';
 
 interface ValidationCheck {
   label: string;
@@ -41,22 +44,19 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
-    const [txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = await Promise.all([
-      supabase.from('transactions').select('*').eq('bt_report_id', currentBt.id).order('ordem', { ascending: true }),
-      supabase.from('revenue_own').select('*').eq('bt_report_id', currentBt.id),
-      supabase.from('cheques').select('*'),
-      supabase.from('deposits_pending').select('*'),
-      supabase.from('payments_pending').select('*'),
-      supabase.from('pendency_resolutions').select('*'),
-      supabase.from('bt_reports').select('id, data'),
+    const [txs, revs, pendency, bts] = await Promise.all([
+      listTransactions(currentBt.id),
+      listRevenues(currentBt.id),
+      fetchPendencyData(),
+      listBtMeta(),
     ]);
-    if (txRes.data) setTransactions(txRes.data as Transaction[]);
-    if (revRes.data) setRevenues(revRes.data as RevenueOwn[]);
-    if (cqRes.data) setCheques(cqRes.data as Cheque[]);
-    if (dpRes.data) setDeposits(dpRes.data as DepositPending[]);
-    if (payRes.data) setPayments(payRes.data as PaymentPending[]);
-    if (resRes.data) setResolutions(resRes.data as PendencyResolution[]);
-    if (btsRes.data) setAllBts(btsRes.data as Pick<BtReport, 'id' | 'data'>[]);
+    setTransactions(txs);
+    setRevenues(revs);
+    setCheques(pendency.cheques);
+    setDeposits(pendency.deposits);
+    setPayments(pendency.payments);
+    setResolutions(pendency.resolutions);
+    setAllBts(bts.map(b => ({ id: b.id, data: b.data })));
     setElaboradoPor(currentBt.elaborado_por || '');
     setCargoElaborado(currentBt.cargo_elaborado || '');
     setConferidoPor(currentBt.conferido_por || '');
@@ -70,14 +70,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   // Busca o BT anterior (data imediatamente anterior à do BT atual) para importar assinaturas
   const fetchBtAnterior = useCallback(async () => {
     if (!currentBt) return;
-    const { data } = await supabase
-      .from('bt_reports')
-      .select('*')
-      .lt('data', currentBt.data)
-      .order('data', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    setBtAnterior((data as BtReport) || null);
+    setBtAnterior(await fetchBtBefore(currentBt.data));
   }, [currentBt]);
 
   useEffect(() => {
@@ -87,7 +80,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   // Herança automática: ao abrir um BT novo com campos vazios, importa do BT
   // anterior e já grava no banco — o fechamento não exige reabrir o modal e
   // salvar quando os dados herdados estão completos.
-  const handleImportSignatures = () => {
+  const handleImportSignatures = async () => {
     if (!btAnterior || !currentBt) return;
     const next = {
       elaborado: !elaboradoPor.trim() ? (btAnterior.elaborado_por || '') : elaboradoPor,
@@ -99,16 +92,13 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     setCargoElaborado(next.cargoElab);
     setConferidoPor(next.conferido);
     setCargoConferido(next.cargoConf);
-    supabase
-      .from('bt_reports')
-      .update({
-        elaborado_por: next.elaborado.trim() || null,
-        cargo_elaborado: next.cargoElab.trim() || null,
-        conferido_por: next.conferido.trim() || null,
-        cargo_conferido: next.cargoConf.trim() || null,
-      })
-      .eq('id', currentBt.id)
-      .then(() => refreshBt());
+    await updateBtSignatures(currentBt.id, {
+      elaborado_por: next.elaborado.trim() || null,
+      cargo_elaborado: next.cargoElab.trim() || null,
+      conferido_por: next.conferido.trim() || null,
+      cargo_conferido: next.cargoConf.trim() || null,
+    });
+    await refreshBt();
   };
 
   useEffect(() => {
@@ -262,25 +252,19 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const handleSaveSignatures = async () => {
     if (!currentBt) return;
-    await supabase
-      .from('bt_reports')
-      .update({
-        elaborado_por: elaboradoPor.trim() || null,
-        cargo_elaborado: cargoElaborado.trim() || null,
-        conferido_por: conferidoPor.trim() || null,
-        cargo_conferido: cargoConferido.trim() || null,
-      })
-      .eq('id', currentBt.id);
+    await updateBtSignatures(currentBt.id, {
+      elaborado_por: elaboradoPor.trim() || null,
+      cargo_elaborado: cargoElaborado.trim() || null,
+      conferido_por: conferidoPor.trim() || null,
+      cargo_conferido: cargoConferido.trim() || null,
+    });
     await refreshBt();
   };
 
   const handleClose = async () => {
     if (!currentBt || !allPassed) return;
     setClosing(true);
-    await supabase
-      .from('bt_reports')
-      .update({ status: 'fechado' })
-      .eq('id', currentBt.id);
+    await setBtStatus(currentBt.id, 'fechado');
     await refreshBt();
     await fetchAll();
     setClosing(false);
@@ -288,19 +272,13 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const handleValidate = async () => {
     if (!currentBt) return;
-    await supabase
-      .from('bt_reports')
-      .update({ status: 'validado' })
-      .eq('id', currentBt.id);
+    await setBtStatus(currentBt.id, 'validado');
     await refreshBt();
   };
 
   const handleReopen = async () => {
     if (!currentBt) return;
-    await supabase
-      .from('bt_reports')
-      .update({ status: 'rascunho' })
-      .eq('id', currentBt.id);
+    await setBtStatus(currentBt.id, 'rascunho');
     await refreshBt();
     await fetchAll();
   };
