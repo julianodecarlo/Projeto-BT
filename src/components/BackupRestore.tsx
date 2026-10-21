@@ -16,6 +16,24 @@ const TABLES = [
   'reconciliation',
 ] as const;
 
+const FALLBACK_KEY = 'bt_backup_fallback';
+
+// Erros de rede do fetch chegam como TypeError ("Failed to fetch").
+function isNetworkError(err: unknown): boolean {
+  return err instanceof TypeError;
+}
+
+function saveFallback(table: string, rows: unknown[]): void {
+  try {
+    const raw = localStorage.getItem(FALLBACK_KEY);
+    const stored = raw ? (JSON.parse(raw) as Record<string, unknown[]>) : {};
+    stored[table] = rows;
+    localStorage.setItem(FALLBACK_KEY, JSON.stringify(stored));
+  } catch (storageErr) {
+    console.error('Erro ao salvar dados localmente no navegador:', storageErr);
+  }
+}
+
 export function exportBackup(): Promise<void> {
   return (async () => {
     const backup: Record<string, unknown> = { __version: 1 };
@@ -54,13 +72,35 @@ export function RestoreBackup({ onDone }: RestoreBackupProps) {
       }
 
       // Ordem respeita dependências (pai antes de filho)
+      const offlineTables: string[] = [];
       for (const table of [...TABLES].reverse()) {
         const rows = backup[table];
         if (!Array.isArray(rows) || rows.length === 0) continue;
-        // Limpa a tabela antes de reinserir (upsert por id mantém chaves)
-        await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
-        if (error) throw new Error(`Falha ao restaurar ${table}: ${error.message}`);
+        try {
+          // Limpa a tabela antes de reinserir (upsert por id mantém chaves)
+          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
+          if (error) throw new Error(`Falha ao restaurar ${table}: ${error.message}`);
+        } catch (tableErr) {
+          if (isNetworkError(tableErr)) {
+            // Sem acesso ao banco: guarda no localStorage e segue com as demais
+            // tabelas em vez de travar a restauração inteira.
+            console.error(`Erro de rede ao restaurar ${table}:`, tableErr);
+            saveFallback(table, rows);
+            offlineTables.push(table);
+            continue;
+          }
+          throw tableErr;
+        }
+      }
+
+      if (offlineTables.length > 0) {
+        console.error('Tabelas não restauradas no banco por falta de conexão:', offlineTables);
+        onDone(
+          `Sem conexão com o banco de dados. As tabelas (${offlineTables.join(', ')}) foram salvas localmente no navegador e podem ser recuperadas do localStorage. Tente restaurar novamente com conexão.`,
+          false
+        );
+        return;
       }
 
       onDone('Backup restaurado com sucesso!', true);
