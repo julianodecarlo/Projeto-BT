@@ -4,6 +4,7 @@ import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
 import { validarBtCentral as runValidacao, type PendenciaItem } from '@/lib/validacao';
 import { fetchValidacaoData } from '@/lib/btData';
+import { sortAccounts } from '@/lib/sortAccounts';
 import {
   listAccounts,
   fetchBt,
@@ -75,7 +76,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshAccounts = useCallback(async () => {
-    setAccounts(await listAccounts());
+    setAccounts(sortAccounts(await listAccounts()));
   }, []);
 
   const refreshBt = useCallback(async () => {
@@ -114,7 +115,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
   const cascadeRecalculate = useCallback(async (fromBtId: string) => {
     const editedBt = await fetchBt(fromBtId);
     if (!editedBt) return;
-    const accs = await listAccounts();
+    const accs = sortAccounts(await listAccounts());
     if (accs.length === 0) return;
     const subsequent = await listBtsFromData(editedBt.data);
     // Recalcula cada BT da cadeia com abertura = saldo final do BT anterior
@@ -205,7 +206,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
         if (lastBt) {
           // Re-sincronização forçada: recalcula do zero e sobrescreve os saldos
           // salvos no banco para todas as contas do BT ativo antes de qualquer aba renderizar
-          const accs = await listAccounts();
+          const accs = sortAccounts(await listAccounts());
           await forceRecalcBtSaldos(lastBt, accs);
           setCurrentBt(lastBt);
         }

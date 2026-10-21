@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getSaldoAbertura, getBtAnterior } from './recalc';
+import { sortAccounts } from './sortAccounts';
 import type { Account, BtReport, Convenio } from '@/types';
 
 /*
@@ -81,7 +82,7 @@ async function getPreviousBt(bt: BtReport): Promise<BtReport | null> {
 
 async function fetchAccounts(): Promise<Account[]> {
   const { data } = await supabase.from('accounts').select('*').order('ordem');
-  return (data as Account[]) || [];
+  return sortAccounts((data as Account[]) || []);
 }
 
 async function fetchConvenios(): Promise<Convenio[]> {

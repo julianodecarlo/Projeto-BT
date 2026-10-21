@@ -75,6 +75,8 @@ export type TransactionTipo =
   | 'transf_livre'
   | 'deposito_anulacao';
 
+export type FonteOrcamentaria = 'fonte_5' | 'fonte_45' | 'fonte_4' | 'fonte_44';
+
 export interface Transaction {
   id: string;
   bt_report_id: string;
@@ -88,6 +90,7 @@ export interface Transaction {
   data_lancamento: string | null;
   ordem: number;
   tipo: TransactionTipo | null;
+  fonte_orcamentaria: FonteOrcamentaria | null;
   created_at: string;
 }
 

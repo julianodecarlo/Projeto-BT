@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { Convenio } from '@/types';
+import type { Convenio, FonteOrcamentaria } from '@/types';
 
 export interface ConvenioInput {
   nome: string;
@@ -27,5 +27,16 @@ export async function updateConvenio(id: string, payload: ConvenioInput): Promis
 
 export async function deleteConvenio(id: string): Promise<boolean> {
   const { error } = await supabase.from('convenios').delete().eq('id', id);
+  return !error;
+}
+
+// Atualiza um único campo de fonte orçamentária (fonte_5/45/4/44) do convênio.
+export async function updateConvenioFonte(
+  id: string,
+  fonte: FonteOrcamentaria,
+  valor: number
+): Promise<boolean> {
+  const { error } = await supabase.from('convenios').update({ [fonte]: valor }).eq('id', id);
+  if (error) console.error('Erro ao atualizar fonte do convênio:', error.message || error);
   return !error;
 }

@@ -13,8 +13,12 @@ import {
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
-import type { Transaction, BudgetType } from '@/types';
+import type { Transaction, BudgetType, FonteOrcamentaria } from '@/types';
+import { listConvenios, updateConvenioFonte } from '@/services/convenioService';
+import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
+import { sortAccounts } from '@/lib/sortAccounts';
+import { clearUnsavedGuard, setUnsavedGuard } from '@/lib/unsavedGuard';
 
 interface RowInput {
   vigente: string;
@@ -48,6 +52,32 @@ export default function Movimentacao() {
   const [depData, setDepData] = useState(todayISO());
   const [depDescricao, setDepDescricao] = useState('');
   const [editingDep, setEditingDep] = useState<string | null>(null);
+
+  // Fonte orçamentária: obrigatória quando a conta selecionada é convênio
+  const [convenios, setConvenios] = useState<Convenio[]>([]);
+  const [depFonte, setDepFonte] = useState<FonteOrcamentaria | ''>('');
+  const depConta = accounts.find(a => a.id === depAccountId);
+  const isContaConvenio = depConta?.categoria === 'convenio';
+
+  useEffect(() => {
+    listConvenios().then(setConvenios);
+  }, []);
+
+  // Estado "sujo": algum valor digitado nas colunas orçamentárias ainda não salvo.
+  const hasUnsavedInputs = useMemo(
+    () => Object.values(inputs).some(row =>
+      (row.vigente || '').trim() !== '' ||
+      (row.restos_pagar || '').trim() !== '' ||
+      (row.diversos_credores || '').trim() !== ''
+    ),
+    [inputs]
+  );
+
+  // Notifica a barreira global de navegação; ao salvar, a barreira é liberada.
+  useEffect(() => {
+    setUnsavedGuard(hasUnsavedInputs);
+    return () => setUnsavedGuard(false);
+  }, [hasUnsavedInputs]);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -198,6 +228,7 @@ export default function Movimentacao() {
       await recalcAccountSaldos(acc.id);
     }
     await fetchTransactions();
+    clearUnsavedGuard();
     setSavedFlash('Movimentações salvas com sucesso!');
     setTimeout(() => setSavedFlash(null), 3000);
   };
@@ -354,26 +385,43 @@ export default function Movimentacao() {
     fetchTransactions();
   };
 
-  // Anulação de despesa também credita a conta (estorno), nunca debita
+  // Anulação de despesa também credita a conta (estorno), nunca debita.
+  // Em contas de convênio, o valor lançado também soma na fonte orçamentária
+  // correspondente (Fonte 5/45/4/44) do convênio vinculado à conta.
   const handleSaveDeposito = async () => {
     if (!currentBt || !depAccountId || !depValor || depValor === 0) return;
+    if (isContaConvenio && !depFonte) {
+      setTransferError('Selecione a Fonte Orçamentária (5, 45, 4 ou 44) para contas de convênio.');
+      return;
+    }
     setSavingTransfer(true);
     setTransferError(null);
     const valor = Math.abs(depValor);
-    const descricao = depDescricao.trim() || (depKind === 'deposito' ? 'Depósito' : 'Anulação');
+    const fonteLabels: Record<FonteOrcamentaria, string> = {
+      fonte_5: 'Fonte 5', fonte_45: 'Fonte 45', fonte_4: 'Fonte 4', fonte_44: 'Fonte 44',
+    };
+    const sufixoFonte = isContaConvenio && depFonte ? ` (${fonteLabels[depFonte]})` : '';
+    const descricao = (depDescricao.trim() || (depKind === 'deposito' ? 'Depósito' : 'Anulação')) + sufixoFonte;
     if (editingDep) {
       const ok = await updateTransaction(editingDep, {
         valor,
         descricao,
         data_lancamento: depData || currentBt.data,
+        fonte_orcamentaria: isContaConvenio ? (depFonte || null) : null,
       });
-      if (!ok) await recalcAccountSaldos(depAccountId);
+      if (ok) {
+        await recalcAccountSaldos(depAccountId);
+        if (isContaConvenio && depFonte) {
+          await syncFonteConvenio(depAccountId, depFonte);
+        }
+      }
       setSavingTransfer(false);
       if (ok) {
         setEditingDep(null);
         setDepValor(null);
         setDepDescricao('');
         setDepKind('deposito');
+        setDepFonte('');
         setDepData(todayISO());
         setTransferFlash('Lançamento atualizado.');
         setTimeout(() => setTransferFlash(null), 3000);
@@ -391,17 +439,41 @@ export default function Movimentacao() {
       valor,
       dataLancamento: depData || currentBt.data,
       tipo: 'deposito_anulacao',
+      fonteOrcamentaria: isContaConvenio ? (depFonte || null) : null,
     });
-    if (ok) await recalcAccountSaldos(depAccountId);
+    if (ok) {
+      await recalcAccountSaldos(depAccountId);
+      if (isContaConvenio && depFonte) {
+        await syncFonteConvenio(depAccountId, depFonte);
+      }
+    }
     setSavingTransfer(false);
     if (ok) {
       setDepValor(null);
       setDepDescricao('');
-      setTransferFlash('Lançamento registrado e somado ao saldo da conta.');
+      setDepFonte('');
+      setTransferFlash(isContaConvenio && depFonte
+        ? `Lançamento registrado e somado ao saldo da conta e da ${fonteLabels[depFonte]}.`
+        : 'Lançamento registrado e somado ao saldo da conta.');
       setTimeout(() => setTransferFlash(null), 3000);
       fetchTransactions();
     } else {
       setTransferError('Não foi possível registrar o lançamento. Tente novamente.');
+    }
+  };
+
+  // Soma (depósito/entrada) ou subtrai (anulação/estorno... na prática anulação
+  // também credita a conta, mas desconta da fonte) o valor lançado na coluna da
+  // fonte orçamentária do convênio vinculado à conta.
+  const syncFonteConvenio = async (accId: string, fonte: FonteOrcamentaria) => {
+    const conv = convenios.find(c => c.finance_account_id === accId);
+    if (!conv) return;
+    const ajuste = depKind === 'anulacao' ? -Math.abs(depValor || 0) : Math.abs(depValor || 0);
+    const atual = conv[fonte] || 0;
+    const novoValor = toDecimal(atual).plus(ajuste).toNumber();
+    const ok = await updateConvenioFonte(conv.id, fonte, novoValor);
+    if (ok) {
+      setConvenios(prev => prev.map(c => (c.id === conv.id ? { ...c, [fonte]: novoValor } : c)));
     }
   };
 
@@ -412,6 +484,7 @@ export default function Movimentacao() {
     setDepValor(tx.valor);
     setDepData(tx.data_lancamento || todayISO());
     setDepDescricao(tx.descricao);
+    setDepFonte(tx.fonte_orcamentaria ?? '');
   };
 
   const deleteDeposito = async (tx: Transaction) => {
@@ -486,7 +559,7 @@ export default function Movimentacao() {
     );
   }
 
-  const activeAccounts = accounts.filter(a => a.ativo);
+  const activeAccounts = sortAccounts(accounts.filter(a => a.ativo));
 
   return (
     <>
@@ -790,11 +863,11 @@ export default function Movimentacao() {
             <h3 className="text-sm font-bold text-slate-800">Depósitos / Anulações</h3>
           </div>
           <p className="text-xs text-slate-500 mb-4">
-            Depósito credita a conta escolhida; anulação debita. O saldo é atualizado imediatamente em todas as abas.
+            Depósito credita a conta escolhida; anulação debita. Em contas de convênio, selecione também a Fonte Orçamentária (5/45/4/44) — o valor reflete no Controle de Convênios.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Conta">
-              <Select value={depAccountId} onChange={(e) => setDepAccountId(e.target.value)}>
+              <Select value={depAccountId} onChange={(e) => { setDepAccountId(e.target.value); setDepFonte(''); }}>
                 <option value="">Selecione...</option>
                 {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
               </Select>
@@ -805,6 +878,21 @@ export default function Movimentacao() {
                 <option value="anulacao">Anulação</option>
               </Select>
             </Field>
+            {isContaConvenio && (
+              <Field label="Fonte Orçamentária *">
+                <Select
+                  value={depFonte}
+                  onChange={(e) => setDepFonte(e.target.value as FonteOrcamentaria | '')}
+                  required
+                >
+                  <option value="">Selecione a fonte...</option>
+                  <option value="fonte_5">Fonte 5 — Convênio</option>
+                  <option value="fonte_45">Fonte 45 — Convênio Superávit</option>
+                  <option value="fonte_4">Fonte 4 — Contrapartida</option>
+                  <option value="fonte_44">Fonte 44 — Contrapartida Superávit</option>
+                </Select>
+              </Field>
+            )}
             <Field label="Valor (R$)">
               <MoneyInput value={depValor} onValueChange={setDepValor} className="w-full px-3 py-2 text-sm" />
             </Field>
@@ -832,7 +920,7 @@ export default function Movimentacao() {
                 <X className="w-4 h-4" /> Cancelar Edição
               </Button>
             )}
-            <Button size="sm" onClick={handleSaveDeposito} disabled={savingTransfer || !depAccountId || !depValor || depValor === 0}>
+            <Button size="sm" onClick={handleSaveDeposito} disabled={savingTransfer || !depAccountId || !depValor || depValor === 0 || (isContaConvenio && !depFonte)}>
               {savingTransfer ? 'Registrando...' : editingDep ? 'Atualizar Lançamento' : 'Registrar'}
             </Button>
           </div>

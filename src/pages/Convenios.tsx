@@ -6,6 +6,7 @@ import { formatCurrency, toDecimal } from '@/lib/format';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { MoneyInput } from '@/components/ui/MoneyInput';
+import { sortAccounts } from '@/lib/sortAccounts';
 import {
   listConvenios,
   createConvenio,
@@ -109,7 +110,7 @@ export default function Convenios() {
     );
   }
 
-  const activeAccounts = accounts.filter(a => a.ativo);
+  const activeAccounts = sortAccounts(accounts.filter(a => a.ativo));
   const totalFonte5 = convenios.reduce((s, c) => s + (c.fonte_5 || 0), 0);
   const totalFonte45 = convenios.reduce((s, c) => s + (c.fonte_45 || 0), 0);
   const totalFonte4 = convenios.reduce((s, c) => s + (c.fonte_4 || 0), 0);

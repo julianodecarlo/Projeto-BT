@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getOpenItems } from './reconStatus';
+import { sortAccounts } from './sortAccounts';
 import type {
   BtReport,
   Account,
@@ -60,7 +61,7 @@ export async function fetchPdfData(btId: string): Promise<PdfData | null> {
   );
   return {
     bt: bt as BtReport,
-    accounts: (accountsRes.data || []) as Account[],
+    accounts: sortAccounts((accountsRes.data || []) as Account[]),
     transactions: (txRes.data || []) as Transaction[],
     revenues: (revRes.data || []) as RevenueOwn[],
     cheques: openItems.cheques,

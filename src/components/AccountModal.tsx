@@ -6,6 +6,7 @@ import { useBt } from '@/context/BtContext';
 import type { Account, AccountCategory } from '@/types';
 import { Trash2, Pencil } from 'lucide-react';
 import { MoneyInput } from './ui/MoneyInput';
+import { sortAccounts } from '@/lib/sortAccounts';
 
 interface AccountModalProps {
   open: boolean;
@@ -114,7 +115,7 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
 
         {/* List */}
         <div className="space-y-2">
-          {accounts.map(acc => (
+          {sortAccounts(accounts).map(acc => (
             <div key={acc.id} className="flex items-center justify-between py-2.5 px-3 border border-slate-200 rounded-lg">
               <div className="flex items-center gap-3">
                 <div className={`w-2 h-2 rounded-full ${acc.ativo ? 'bg-emerald-500' : 'bg-slate-300'}`} />

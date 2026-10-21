@@ -21,6 +21,7 @@ import { listTransactions } from '@/services/transactionService';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
 import { getOpenItems } from '@/lib/reconStatus';
+import { sortAccounts } from '@/lib/sortAccounts';
 
 type ResolutionKind = 'cheque' | 'deposito' | 'pagamento';
 
@@ -261,7 +262,7 @@ export default function Conciliacao() {
     );
   }
 
-  const activeAccounts = accounts.filter(a => a.ativo);
+  const activeAccounts = sortAccounts(accounts.filter(a => a.ativo));
   const totalChequesCompensar = toNumber(sumDecimal(openItems.cheques.map(c => c.valor)));
   const totalDeposits = toNumber(sumDecimal(openItems.deposits.map(d => d.valor)));
   const totalPayments = toNumber(sumDecimal(openItems.payments.map(p => p.valor)));

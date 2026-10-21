@@ -13,6 +13,7 @@ import Modal from '@/components/ui/Modal';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { listRecentBts } from '@/services/btService';
 import { listTransactions } from '@/services/transactionService';
+import { sortAccounts } from '@/lib/sortAccounts';
 
 interface DashboardProps {
   onNavigate: (page: PageKey) => void;
@@ -149,7 +150,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
             </Button>
           </div>
           <div className="space-y-2">
-            {accounts.map((acc) => (
+            {sortAccounts(accounts).map((acc) => (
               <div key={acc.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${acc.ativo ? 'bg-emerald-500' : 'bg-slate-300'}`} />

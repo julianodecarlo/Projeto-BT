@@ -1,6 +1,7 @@
 import { fetchPdfData } from './btData';
 import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento } from './format';
 import { calcularStatusConciliacao, pendenciasPorConta } from './reconStatus';
+import { sortAccounts } from './sortAccounts';
 import type {
   BtReport,
   Account,
@@ -26,7 +27,7 @@ interface PdfData {
 export function generatePdfHtml(data: PdfData): string {
   const { bt, accounts, transactions, revenues, cheques, deposits, payments, reconciliations } = data;
 
-  const activeAccounts = accounts.filter(a => a.ativo);
+  const activeAccounts = sortAccounts(accounts.filter(a => a.ativo));
   const revContabil = revenues.filter(r => r.tipo === 'contabil');
   const revFinanceira = revenues.filter(r => r.tipo === 'financeira');
 

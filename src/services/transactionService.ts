@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { toDecimal } from '@/lib/format';
-import type { Transaction } from '@/types';
+import type { Transaction, FonteOrcamentaria } from '@/types';
 
 export async function listTransactions(btId: string): Promise<Transaction[]> {
   const { data } = await supabase
@@ -58,6 +58,7 @@ export interface NewEntry {
   tipoMovimento: 'entrada' | 'saida';
   tipo?: string | null;
   tipoOrcamento?: string | null;
+  fonteOrcamentaria?: FonteOrcamentaria | null;
   ordem?: number | null;
   // Quando a cadeia de saldos já é conhecida (lançamentos orçamentários), os
   // saldos vêm prontos; por padrão são derivados do saldo corrente da conta.
@@ -90,6 +91,7 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
     if (e.dataLancamento) payload.data_lancamento = e.dataLancamento;
     if (e.tipo) payload.tipo = e.tipo;
     if (e.tipoOrcamento) payload.tipo_orcamento = e.tipoOrcamento;
+    if (e.fonteOrcamentaria) payload.fonte_orcamentaria = e.fonteOrcamentaria;
     if (e.ordem != null) payload.ordem = e.ordem;
     const { error } = await supabase.from('transactions').insert(payload);
     if (error) console.error('Erro ao salvar movimentação:', error.message || error);
@@ -102,7 +104,7 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
 
 export async function updateTransaction(
   id: string,
-  fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento'>>
+  fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento' | 'fonte_orcamentaria'>>
 ): Promise<boolean> {
   try {
     const { error } = await supabase.from('transactions').update(fields).eq('id', id);
