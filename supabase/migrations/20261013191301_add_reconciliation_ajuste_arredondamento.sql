@@ -1,0 +1,1 @@
+ALTER TABLE reconciliation ADD COLUMN IF NOT EXISTS ajuste_arredondamento numeric NOT NULL DEFAULT 0;

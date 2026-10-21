@@ -1,0 +1,57 @@
+For all designs I ask you to make, have them be beautiful, not cookie cutter. Make webpages that are fully featured and worthy for production.
+
+By default, this template supports JSX syntax with Tailwind CSS classes, React hooks, and Lucide React for icons. Do not install other packages for UI themes, icons, etc unless absolutely necessary or I request them.
+
+Use icons from lucide-react for logos.
+
+Import project modules with the `@/` path alias, which maps to `src/` (e.g. `@/components/Foo` == `src/components/Foo`), instead of deep relative paths like `../../components/Foo`.
+
+
+
+================================================================================
+PRD & INSTRUÇÕES DE ARQUITETURA TÉCNICA — TESOURARIA 360 (APLICAÇÃO BT)
+================================================================================
+
+1. DIRETRIZ E EQUAÇÃO FUNDAMENTAL DO SISTEMA
+- Conceito Central: A Conta Bancária é uma entidade ÚNICA e GLOBAL compartilhada de forma reativa entre TODAS as abas (Dashboard, Controle da Receita, Movimentações, Conciliação e PDF do BT).
+- O Saldo Orçamentário Final de qualquer conta em qualquer aba DEVE seguir estritamente a fórmula contábil:
+  SALDO FINAL = SALDO ANTERIOR + TOTAL ENTRADAS (CRÉDITOS) - TOTAL SAÍDAS (DÉBITOS)
+
+2. COMPOSIÇÃO DOS CRÉDITOS E DÉBITOS
+- TOTAL ENTRADAS (CRÉDITOS):
+  * Repasses da Reitoria recebidos pela conta.
+  * Transferências Recebidas (onde a conta é Destino).
+  * Depósitos inseridos no modal Depósitos/Anulações.
+  * Anulações de Despesas (estornos/devoluções que SEMPRE somam como crédito/entrada).
+  * Rendimentos de Aplicação.
+- TOTAL SAÍDAS (DÉBITOS):
+  * Valores digitados nas colunas 'Orçamento Vigente', 'Restos a Pagar' e 'Diversos Credores'.
+  * Transferências Enviadas (onde a conta é Origem).
+
+3. REGRAS POR ABA E COMPONENTES
+A. ABA CONTROLE DA RECEITA (RP) - Sequência obrigatória de 4 modais:
+   1. Receitas Próprias - Financeira (4 Colunas): Saldo Final = Saldo Anterior + Caixa + Bancos. Exige seleção da conta bancária de destino e credita a conta selecionada globalmente.
+   2. Receitas Próprias - Contábil (3 Colunas): Controle acumulativo orçamentário.
+   3. Resumo por Subalínea: Consolidação de leitura dos totais contábeis e financeiros.
+   4. Subalíneas de Receita Própria: Ordenação estrita do menor para o maior código numérico.
+   - Controles de Cabeçalho: 'Editar Saldo Anterior' (bloqueado por padrão, exige confirmação) e 'Salvar Lançamentos' (gravação direta e recálculo global). Sem botões '+ Lançamento'.
+
+B. ABA MOVIMENTAÇÕES:
+   - Lançamento de Movimentações: A coluna 'SUB-TOTAL' é puramente informativa (soma dos débitos da linha). A coluna 'SALDO FINAL' aplica a fórmula global completa.
+   - Os lançamentos salvos ficam estáticos na tela mantendo o histórico consultável e editável.
+   - Modais 'Repasse da Reitoria', 'Transferência Livre entre Contas' e 'Depósitos/Anulações' possuem tabela de histórico abaixo com botões de Editar e Excluir em cada linha.
+
+C. ABA CONCILIAÇÃO BANCÁRIA:
+   - Saldo Conciliado = Saldo Extrato - Rendimento Acumulado - Cheques Pendentes + Depósitos Pendentes.
+   - Se Saldo Conciliado != Saldo Orçamentário, exibir o badge 'Divergente' com o valor exato da variação logo abaixo (ex: "Dif: R$ 150,00").
+
+D. GERAR NOVO BT (TRANSIÇÃO DE PERÍODO):
+   - O Saldo Final do BT N passa a ser o Saldo Anterior (Inicial) do BT N+1.
+   - Lançamentos do período são zerados.
+   - Pendências (Cheques a Compensar, Depósitos Pendentes e Pagamentos Pendentes) NÃO são zeradas e transitam entre os BTs até serem baixadas.
+
+4. DIRETRIZES DE CÓDIGO E PERFORMANCE
+- Não duplique estados locais de saldos por componente; utilize a função centralizada de recálculo em cadeia (`recalcAccountSaldos`) após qualquer mutação.
+- Manter formatação monetária padrão BRL sem corromper máscaras de milhar.
+- Manter o build sem erros de compilação ou alertas de tipos TypeScript.
+================================================================================
