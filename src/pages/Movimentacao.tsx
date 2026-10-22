@@ -14,11 +14,12 @@ import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
 import type { Transaction, BudgetType, FonteOrcamentaria } from '@/types';
-import { listConvenios, updateConvenioFonte } from '@/services/convenioService';
+import { listConvenios } from '@/services/convenioService';
+import { recalcConveniosPorContas } from '@/services/convenioRecalc';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { sortAccounts } from '@/lib/sortAccounts';
-import { clearUnsavedGuard, setUnsavedGuard } from '@/lib/unsavedGuard';
+import { setUnsavedGuard, setUnsavedSaver } from '@/lib/unsavedGuard';
 
 interface RowInput {
   vigente: string;
@@ -75,9 +76,18 @@ export default function Movimentacao() {
 
   // Notifica a barreira global de navegação; ao salvar, a barreira é liberada.
   useEffect(() => {
-    setUnsavedGuard(hasUnsavedInputs);
-    return () => setUnsavedGuard(false);
+    setUnsavedGuard('movimentacao', hasUnsavedInputs);
   }, [hasUnsavedInputs]);
+
+  // Registra o salvamento da tela: executado pela barreira de navegação
+  // quando o usuário escolhe "Salvar" no aviso de alterações não salvas.
+  const handleSaveRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    return setUnsavedSaver('movimentacao', async () => {
+      await handleSaveRef.current();
+      return true;
+    });
+  }, []);
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -228,10 +238,11 @@ export default function Movimentacao() {
       await recalcAccountSaldos(acc.id);
     }
     await fetchTransactions();
-    clearUnsavedGuard();
+    setUnsavedGuard('movimentacao', false);
     setSavedFlash('Movimentações salvas com sucesso!');
     setTimeout(() => setSavedFlash(null), 3000);
   };
+  handleSaveRef.current = handleSave;
 
   // Recria a cadeia saldo_anterior → saldo_final de uma conta após inserir, editar ou excluir lançamentos
   const recalcAccountSaldos = async (accId: string) => {
@@ -411,9 +422,7 @@ export default function Movimentacao() {
       });
       if (ok) {
         await recalcAccountSaldos(depAccountId);
-        if (isContaConvenio && depFonte) {
-          await syncFonteConvenio(depAccountId, depFonte);
-        }
+        await recalcFontesConvenio([depAccountId]);
       }
       setSavingTransfer(false);
       if (ok) {
@@ -443,9 +452,7 @@ export default function Movimentacao() {
     });
     if (ok) {
       await recalcAccountSaldos(depAccountId);
-      if (isContaConvenio && depFonte) {
-        await syncFonteConvenio(depAccountId, depFonte);
-      }
+      await recalcFontesConvenio([depAccountId]);
     }
     setSavingTransfer(false);
     if (ok) {
@@ -462,19 +469,13 @@ export default function Movimentacao() {
     }
   };
 
-  // Soma (depósito/entrada) ou subtrai (anulação/estorno... na prática anulação
-  // também credita a conta, mas desconta da fonte) o valor lançado na coluna da
-  // fonte orçamentária do convênio vinculado à conta.
-  const syncFonteConvenio = async (accId: string, fonte: FonteOrcamentaria) => {
-    const conv = convenios.find(c => c.finance_account_id === accId);
-    if (!conv) return;
-    const ajuste = depKind === 'anulacao' ? -Math.abs(depValor || 0) : Math.abs(depValor || 0);
-    const atual = conv[fonte] || 0;
-    const novoValor = toDecimal(atual).plus(ajuste).toNumber();
-    const ok = await updateConvenioFonte(conv.id, fonte, novoValor);
-    if (ok) {
-      setConvenios(prev => prev.map(c => (c.id === conv.id ? { ...c, [fonte]: novoValor } : c)));
-    }
+  // Recálculo IDEMPOTENTE das fontes dos convênios vinculados às contas tocadas:
+  // Saldo Fonte = Saldo Anterior (snapshot do BT) + depósitos − anulações,
+  // filtrando SEMPRE por conta do convênio E fonte_orcamentaria exata.
+  const recalcFontesConvenio = async (contasTocadas: string[]) => {
+    if (!currentBt) return;
+    await recalcConveniosPorContas(currentBt.id, convenios, contasTocadas);
+    setConvenios(await listConvenios());
   };
 
   const startEditDeposito = (tx: Transaction) => {
@@ -495,6 +496,7 @@ export default function Movimentacao() {
       setDepDescricao('');
     }
     await recalcAccountSaldos(tx.account_id);
+    await recalcFontesConvenio([tx.account_id]);
     fetchTransactions();
   };
 

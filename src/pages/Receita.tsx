@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Trash2, Layers, FileText, Pencil, X, Check, Handshake, Save, Lock, LockOpen, AlertTriangle } from 'lucide-react';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, EmptyState } from '@/components/ui/Field';
@@ -8,6 +8,7 @@ import type { RevenueOwn, Subalinea } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import Modal from '@/components/ui/Modal';
+import { setUnsavedGuard, setUnsavedSaver } from '@/lib/unsavedGuard';
 import {
   listSubalinhas,
   addSubalinea as svcAddSubalinea,
@@ -149,6 +150,7 @@ export default function Receita() {
     setSaldoEdits({});
     setSaldoUnlock(false);
     setSaving(false);
+    setUnsavedGuard('receita', false);
     showToast(ok ? 'Lançamentos salvos com sucesso' : 'Erro ao salvar alguns lançamentos. Tente novamente.');
   };
 
@@ -156,6 +158,24 @@ export default function Receita() {
     await deleteRevenue(id);
     setRevenues(revenues.filter(r => r.id !== id));
   };
+
+  // Estado "sujo": edições de células/saldos ainda não salvas.
+  const hasUnsavedEdits =
+    Object.keys(cellEdits).length > 0 || Object.keys(saldoEdits).length > 0;
+  useEffect(() => {
+    setUnsavedGuard('receita', hasUnsavedEdits);
+  }, [hasUnsavedEdits]);
+
+  // Registra o salvamento da tela: executado pela barreira de navegação
+  // quando o usuário escolhe "Salvar" no aviso de alterações não salvas.
+  const saveAllRef = useRef(saveAll);
+  saveAllRef.current = saveAll;
+  useEffect(() => {
+    return setUnsavedSaver('receita', async () => {
+      await saveAllRef.current();
+      return true;
+    });
+  }, []);
 
   const cellInput = (r: RevenueOwn, field: 'arrecadacao' | 'caixa' | 'bancos') => (
     <MoneyInput

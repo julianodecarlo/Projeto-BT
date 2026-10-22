@@ -4,7 +4,7 @@ import Modal from './ui/Modal';
 import { Button } from './ui/Field';
 import { useBt } from '@/context/BtContext';
 import type { PendenciaItem } from '@/lib/validacao';
-import { hasUnsavedGuard, subscribeUnsavedGuard, clearUnsavedGuard } from '@/lib/unsavedGuard';
+import { hasUnsavedGuard, subscribeUnsavedGuard, discardUnsaved, runUnsavedSavers } from '@/lib/unsavedGuard';
 
 export type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
 
@@ -76,8 +76,8 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
     }
   };
 
-  // Navegação com barreira: se há valores digitados não salvos na aba de
-  // Movimentações, interrompe e pede confirmação antes de trocar de aba.
+  // Navegação com barreira: se há valores digitados não salvos em qualquer aba
+  // protegida, interrompe e pede confirmação antes de trocar de aba.
   const handleNavigate = (page: PageKey) => {
     if (hasUnsavedGuard() && page !== current) {
       setPendingNavigate(page);
@@ -86,6 +86,8 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
     }
     onNavigate(page);
   };
+
+  const [savingPending, setSavingPending] = useState(false);
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col h-screen sticky top-0">
@@ -189,8 +191,8 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
         </div>
       )}
 
-      {/* Modal de alterações não salvas */}
-      <Modal open={showUnsavedModal} onClose={() => setShowUnsavedModal(false)} title="Alterações não salvas" maxWidth="max-w-md">
+      {/* Modal de alterações não salvas (3 opções) */}
+      <Modal open={showUnsavedModal} onClose={() => { setShowUnsavedModal(false); setPendingNavigate(null); }} title="Alterações não salvas" maxWidth="max-w-md">
         <div className="space-y-4">
           <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
@@ -198,32 +200,46 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
               Você possui valores digitados que ainda não foram salvos. Deseja salvar antes de sair?
             </p>
           </div>
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex justify-end gap-2 pt-1 flex-wrap">
             <Button
               variant="secondary"
-              onClick={() => {
-                clearUnsavedGuard();
+              onClick={async () => {
                 setShowUnsavedModal(false);
-                if (pendingNavigate) onNavigate(pendingNavigate);
-                setPendingNavigate(null);
+                setSavingPending(true);
+                const ok = await runUnsavedSavers();
+                setSavingPending(false);
+                if (pendingNavigate) {
+                  onNavigate(pendingNavigate);
+                  setPendingNavigate(null);
+                }
+                if (ok) showFeedback('Alterações salvas com sucesso!');
+                else showFeedback('Não foi possível salvar. Verifique os valores digitados.', 'error');
+              }}
+              disabled={savingPending}
+            >
+              {savingPending ? 'Salvando...' : 'Salvar'}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                discardUnsaved();
+                setShowUnsavedModal(false);
+                if (pendingNavigate) {
+                  onNavigate(pendingNavigate);
+                  setPendingNavigate(null);
+                }
               }}
             >
               Sair sem Salvar
             </Button>
             <Button
-              onClick={async () => {
+              variant="ghost"
+              onClick={() => {
                 setShowUnsavedModal(false);
-                const ok = await salvarBtRascunho();
-                clearUnsavedGuard();
-                if (pendingNavigate) {
-                  onNavigate(pendingNavigate);
-                  setPendingNavigate(null);
-                }
-                if (ok) showFeedback('Movimentações salvas com sucesso!');
-                else showFeedback('Não foi possível salvar. Verifique os valores digitados.', 'error');
+                setPendingNavigate(null);
               }}
             >
-              Salvar
+              Continuar Editando
             </Button>
           </div>
         </div>
