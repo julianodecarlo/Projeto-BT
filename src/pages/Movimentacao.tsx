@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X, ArrowDownToLine } from 'lucide-react';
+import { Save, FileText, Check, Landmark, Shuffle, Pencil, Trash2, X, ArrowDownToLine, AlertTriangle } from 'lucide-react';
 import { useBt } from '@/context/BtContext';
 import {
   listTransactions,
@@ -11,6 +11,7 @@ import {
   recalcAccountSaldos as svcRecalcAccountSaldos,
 } from '@/services/transactionService';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
+import Modal from '@/components/ui/Modal';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
 import type { Transaction, BudgetType, FonteOrcamentaria } from '@/types';
@@ -19,7 +20,7 @@ import { recalcConveniosPorContas } from '@/services/convenioRecalc';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { sortAccounts } from '@/lib/sortAccounts';
-import { setUnsavedGuard, setUnsavedSaver } from '@/lib/unsavedGuard';
+import { setUnsavedGuard, setUnsavedSaver, hasUnsavedGuard } from '@/lib/unsavedGuard';
 
 interface RowInput {
   vigente: string;
@@ -88,6 +89,38 @@ export default function Movimentacao() {
       return true;
     });
   }, []);
+
+  // Barreira ENTRE módulos da mesma aba: interage com Repasse/Transferência/
+  // Depósitos enquanto há valores não salvos no Lançamento de Movimentações
+  // é interrompido e o usuário decide salvar/descartar antes de continuar.
+  const [showModuleGuard, setShowModuleGuard] = useState(false);
+  const pendingActionRef = useRef<(() => void) | null>(null);
+
+  const interceptIfDirty = (e: React.SyntheticEvent) => {
+    if (!hasUnsavedGuard()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.target as HTMLElement;
+    pendingActionRef.current = () => { target.click(); };
+    setShowModuleGuard(true);
+  };
+
+  const handleFocusCapture = (e: React.FocusEvent) => {
+    if (!hasUnsavedGuard()) return;
+    (e.target as HTMLElement).blur();
+    pendingActionRef.current = null;
+    setShowModuleGuard(true);
+  };
+
+  const closeModuleGuard = () => {
+    setShowModuleGuard(false);
+    pendingActionRef.current = null;
+  };
+
+  const discardInputs = () => {
+    buildInputState(transactions);
+    setUnsavedGuard('movimentacao', false);
+  };
 
   const fetchTransactions = useCallback(async () => {
     if (!currentBt) return;
@@ -696,8 +729,12 @@ export default function Movimentacao() {
         </div>
       </Card>
 
-      {/* Módulos simples de lançamento */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      {/* Módulos simples de lançamento — protegidos pela barreira de alterações não salvas */}
+      <div
+        className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start"
+        onClickCapture={interceptIfDirty}
+        onFocusCapture={handleFocusCapture}
+      >
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-1">
             <Landmark className="w-4 h-4 text-emerald-600" />
@@ -985,6 +1022,46 @@ export default function Movimentacao() {
           )}
         </Card>
       </div>
+
+      {/* Modal de alterações não salvas (entre módulos da aba) */}
+      <Modal open={showModuleGuard} onClose={closeModuleGuard} title="Alterações não salvas" maxWidth="max-w-md">
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800 font-medium">
+              Você possui valores digitados no Lançamento de Movimentações que ainda não foram salvos. Deseja salvar antes de mudar de modal?
+            </p>
+          </div>
+          <div className="flex justify-end gap-2 pt-1 flex-wrap">
+            <Button
+              onClick={async () => {
+                closeModuleGuard();
+                await handleSave();
+                const action = pendingActionRef.current;
+                pendingActionRef.current = null;
+                if (action) action();
+              }}
+            >
+              Salvar
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                discardInputs();
+                closeModuleGuard();
+                const action = pendingActionRef.current;
+                pendingActionRef.current = null;
+                if (action) action();
+              }}
+            >
+              Sair sem Salvar
+            </Button>
+            <Button variant="ghost" onClick={closeModuleGuard}>
+              Continuar Editando
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <p className="text-xs text-slate-400 px-1">
         Dica: Use a tecla TAB para navegar rapidamente entre os campos. Pressione Enter para pular para o próximo campo. Clique em Salvar quando terminar. Os valores de Repasse / Transferências são registrados imediatamente, sem precisar clicar em Salvar.

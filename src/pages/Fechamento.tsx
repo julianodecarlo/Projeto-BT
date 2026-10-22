@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck, ArrowRight } from 'lucide-react';
+import Modal from '@/components/ui/Modal';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Badge, EmptyState } from '@/components/ui/Field';
 import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/lib/format';
@@ -41,6 +42,9 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const [closing, setClosing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [btAnterior, setBtAnterior] = useState<BtReport | null>(null);
+  const [sigSaved, setSigSaved] = useState(true);
+  const [showSigAlert, setShowSigAlert] = useState(false);
+  const [pendingSigAction, setPendingSigAction] = useState<null | (() => void)>(null);
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
@@ -61,6 +65,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     setCargoElaborado(currentBt.cargo_elaborado || '');
     setConferidoPor(currentBt.conferido_por || '');
     setCargoConferido(currentBt.cargo_conferido || '');
+    setSigSaved(true);
   }, [currentBt]);
 
   useEffect(() => {
@@ -259,6 +264,32 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
       cargo_conferido: cargoConferido.trim() || null,
     });
     await refreshBt();
+    setSigSaved(true);
+  };
+
+  // Detecta edição de assinaturas não salva (qualquer campo digitado difere
+  // do que está gravado no BT). Usada para interromper Validar/Fechar.
+  const signaturesDirty = (() => {
+    if (sigSaved) return false;
+    const cur = currentBt;
+    if (!cur) return false;
+    return (
+      (elaboradoPor.trim() || null) !== (cur.elaborado_por || null) ||
+      (cargoElaborado.trim() || null) !== (cur.cargo_elaborado || null) ||
+      (conferidoPor.trim() || null) !== (cur.conferido_por || null) ||
+      (cargoConferido.trim() || null) !== (cur.cargo_conferido || null)
+    );
+  })();
+
+  // Antes de Validar/Fechar: se houver assinaturas digitadas não salvas,
+  // exige confirmação para gravá-las antes de prosseguir.
+  const guardSignatures = (action: () => void) => {
+    if (!signaturesDirty) {
+      action();
+      return;
+    }
+    setPendingSigAction(() => action);
+    setShowSigAlert(true);
   };
 
   const handleClose = async () => {
@@ -427,19 +458,19 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Elaborado por</p>
             <Field label="Nome">
-              <Input value={elaboradoPor} onChange={(e) => setElaboradoPor(e.target.value)} placeholder="Nome do responsável" disabled={isFechado} />
+              <Input value={elaboradoPor} onChange={(e) => { setElaboradoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" disabled={isFechado} />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoElaborado} onChange={(e) => setCargoElaborado(e.target.value)} placeholder="Ex: Tesoureiro" disabled={isFechado} />
+              <Input value={cargoElaborado} onChange={(e) => { setCargoElaborado(e.target.value); setSigSaved(false); }} placeholder="Ex: Tesoureiro" disabled={isFechado} />
             </Field>
           </div>
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conferido por</p>
             <Field label="Nome">
-              <Input value={conferidoPor} onChange={(e) => setConferidoPor(e.target.value)} placeholder="Nome do responsável" disabled={isFechado} />
+              <Input value={conferidoPor} onChange={(e) => { setConferidoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" disabled={isFechado} />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoConferido} onChange={(e) => setCargoConferido(e.target.value)} placeholder="Ex: Diretor" disabled={isFechado} />
+              <Input value={cargoConferido} onChange={(e) => { setCargoConferido(e.target.value); setSigSaved(false); }} placeholder="Ex: Diretor" disabled={isFechado} />
             </Field>
           </div>
         </div>
@@ -455,14 +486,45 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
       {/* Actions */}
       {!isFechado && (
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={handleValidate} disabled={!allPassed}>
+          <Button variant="secondary" onClick={() => guardSignatures(handleValidate)} disabled={!allPassed}>
             Validar BT
           </Button>
-          <Button onClick={handleClose} disabled={!allPassed || closing} className="bg-emerald-600 hover:bg-emerald-700">
+          <Button onClick={() => guardSignatures(handleClose)} disabled={!allPassed || closing} className="bg-emerald-600 hover:bg-emerald-700">
             <Lock className="w-4 h-4" /> {closing ? 'Fechando...' : 'Fechar BT'}
           </Button>
         </div>
       )}
+
+      {/* Alerta: assinaturas alteradas sem salvar antes de Validar/Fechar */}
+      <Modal open={showSigAlert} onClose={() => { setShowSigAlert(false); setPendingSigAction(null); }} title="Assinaturas não salvas" maxWidth="max-w-md">
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800 font-medium">
+              Você alterou as assinaturas mas ainda não salvou. Deseja salvar as novas assinaturas antes de prosseguir?
+            </p>
+          </div>
+          <div className="flex justify-end gap-2 pt-1 flex-wrap">
+            <Button
+              onClick={async () => {
+                setShowSigAlert(false);
+                await handleSaveSignatures();
+                const action = pendingSigAction;
+                setPendingSigAction(null);
+                if (action) action();
+              }}
+            >
+              Salvar e Prosseguir
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => { setShowSigAlert(false); setPendingSigAction(null); }}
+            >
+              Continuar Editando
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
