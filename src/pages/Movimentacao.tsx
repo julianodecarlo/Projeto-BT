@@ -65,13 +65,27 @@ export default function Movimentacao() {
     listConvenios().then(setConvenios);
   }, []);
 
-  // Estado "sujo": algum valor digitado nas colunas orçamentárias ainda não salvo.
+  // Estado "sujo": só é verdadeiro quando algum valor digitado DIFIERE do
+  // snapshot gravado no banco. Os inputs são pré-preenchidos com os valores
+  // já salvos (histórico editável), então comparar contra o snapshot evita
+  // o falso-positivo de "alterações não salvas" ao apenas carregar a aba.
+  const savedSnapshotRef = useRef<Record<string, RowInput>>({});
+
+  const sameNumber = (a: string, b: string) => {
+    const na = parseFloat(a);
+    const nb = parseFloat(b);
+    return (isNaN(na) || na === 0 ? 0 : na) === (isNaN(nb) || nb === 0 ? 0 : nb);
+  };
+
   const hasUnsavedInputs = useMemo(
-    () => Object.values(inputs).some(row =>
-      (row.vigente || '').trim() !== '' ||
-      (row.restos_pagar || '').trim() !== '' ||
-      (row.diversos_credores || '').trim() !== ''
-    ),
+    () => Object.entries(inputs).some(([accId, row]) => {
+      const saved = savedSnapshotRef.current[accId] || { vigente: '', restos_pagar: '', diversos_credores: '' };
+      return (
+        !sameNumber(row.vigente || '', saved.vigente || '') ||
+        !sameNumber(row.restos_pagar || '', saved.restos_pagar || '') ||
+        !sameNumber(row.diversos_credores || '', saved.diversos_credores || '')
+      );
+    }),
     [inputs]
   );
 
@@ -143,6 +157,9 @@ export default function Movimentacao() {
         state[tx.account_id][key as keyof RowInput] = String(tx.valor || '');
       }
     }
+    // Snapshot do que está gravado: a flag de alterações não salvas compara
+    // os valores digitados contra ESTE estado, não contra zero.
+    savedSnapshotRef.current = { ...state };
     setInputs(state);
   };
 
@@ -156,6 +173,7 @@ export default function Movimentacao() {
       for (const acc of accounts) {
         state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
       }
+      savedSnapshotRef.current = { ...state };
       setInputs(state);
     }
   }, [accounts, transactions.length]);

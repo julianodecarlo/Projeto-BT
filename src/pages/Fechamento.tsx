@@ -43,6 +43,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const [recalculating, setRecalculating] = useState(false);
   const [btAnterior, setBtAnterior] = useState<BtReport | null>(null);
   const [sigSaved, setSigSaved] = useState(true);
+  const [savingSig, setSavingSig] = useState(false);
   const [showSigAlert, setShowSigAlert] = useState(false);
   const [pendingSigAction, setPendingSigAction] = useState<null | (() => void)>(null);
 
@@ -257,6 +258,7 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
 
   const handleSaveSignatures = async () => {
     if (!currentBt) return;
+    setSavingSig(true);
     await updateBtSignatures(currentBt.id, {
       elaborado_por: elaboradoPor.trim() || null,
       cargo_elaborado: cargoElaborado.trim() || null,
@@ -264,11 +266,12 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
       cargo_conferido: cargoConferido.trim() || null,
     });
     await refreshBt();
+    setSavingSig(false);
     setSigSaved(true);
   };
 
-  // Detecta edição de assinaturas não salva (qualquer campo digitado difere
-  // do que está gravado no BT). Usada para interromper Validar/Fechar.
+  // Antes de Validar/Fechar: se houver assinaturas digitadas não salvas
+  // (algum campo difere do que está gravado no BT), exige confirmação.
   const signaturesDirty = (() => {
     if (sigSaved) return false;
     const cur = currentBt;
@@ -281,8 +284,6 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     );
   })();
 
-  // Antes de Validar/Fechar: se houver assinaturas digitadas não salvas,
-  // exige confirmação para gravá-las antes de prosseguir.
   const guardSignatures = (action: () => void) => {
     if (!signaturesDirty) {
       action();
@@ -449,35 +450,35 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
             </Button>
           )}
         </div>
-        {btAnterior && (
+        {btAnterior && !isFechado && (
           <p className="text-xs text-slate-500 mb-3">
-            Assinaturas do BT anterior ({btAnterior.numero}): {btAnterior.elaborado_por || '—'}{btAnterior.cargo_elaborado ? ` (${btAnterior.cargo_elaborado})` : ''} · {btAnterior.conferido_por || '—'}{btAnterior.cargo_conferido ? ` (${btAnterior.cargo_conferido})` : ''}. Os campos permanecem editáveis.
+            Assinaturas do BT anterior ({btAnterior.numero}): {btAnterior.elaborado_por || '—'}{btAnterior.cargo_elaborado ? ` (${btAnterior.cargo_elaborado})` : ''} · {btAnterior.conferido_por || '—'}{btAnterior.cargo_conferido ? ` (${btAnterior.cargo_conferido})` : ''}.
           </p>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Elaborado por</p>
             <Field label="Nome">
-              <Input value={elaboradoPor} onChange={(e) => { setElaboradoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" disabled={isFechado} />
+              <Input value={elaboradoPor} onChange={(e) => { setElaboradoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoElaborado} onChange={(e) => { setCargoElaborado(e.target.value); setSigSaved(false); }} placeholder="Ex: Tesoureiro" disabled={isFechado} />
+              <Input value={cargoElaborado} onChange={(e) => { setCargoElaborado(e.target.value); setSigSaved(false); }} placeholder="Ex: Tesoureiro" />
             </Field>
           </div>
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conferido por</p>
             <Field label="Nome">
-              <Input value={conferidoPor} onChange={(e) => { setConferidoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" disabled={isFechado} />
+              <Input value={conferidoPor} onChange={(e) => { setConferidoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoConferido} onChange={(e) => { setCargoConferido(e.target.value); setSigSaved(false); }} placeholder="Ex: Diretor" disabled={isFechado} />
+              <Input value={cargoConferido} onChange={(e) => { setCargoConferido(e.target.value); setSigSaved(false); }} placeholder="Ex: Diretor" />
             </Field>
           </div>
         </div>
         {!isFechado && (
           <div className="flex justify-end mt-4">
-            <Button variant="secondary" onClick={handleSaveSignatures}>
-              <Save className="w-4 h-4" /> Salvar Assinaturas
+            <Button variant="secondary" onClick={handleSaveSignatures} disabled={savingSig}>
+              <Save className="w-4 h-4" /> {savingSig ? 'Salvando...' : 'Salvar Assinaturas'}
             </Button>
           </div>
         )}
