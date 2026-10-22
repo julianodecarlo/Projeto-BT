@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { CheckCircle, AlertTriangle, FileText, Lock, Save, Unlock, UserCheck, ArrowRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useBt } from '@/context/BtContext';
@@ -42,10 +42,17 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   const [closing, setClosing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [btAnterior, setBtAnterior] = useState<BtReport | null>(null);
-  const [sigSaved, setSigSaved] = useState(true);
   const [savingSig, setSavingSig] = useState(false);
   const [showSigAlert, setShowSigAlert] = useState(false);
   const [pendingSigAction, setPendingSigAction] = useState<null | (() => void)>(null);
+
+  // Baseline do que está gravado no banco para as assinaturas. A detecção de
+  // "alterado sem salvar" compara os campos atuais contra ESTE baseline
+  // (normalizado), não contra um flag de salvamento — assim digitar e voltar
+  // ao valor original deixa de ser considerado alteração pendente.
+  const [sigBaseline, setSigBaseline] = useState({
+    elaborado: '', cargoElab: '', conferido: '', cargoConf: '',
+  });
 
   const fetchAll = useCallback(async () => {
     if (!currentBt) return;
@@ -62,16 +69,31 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     setPayments(pendency.payments);
     setResolutions(pendency.resolutions);
     setAllBts(bts.map(b => ({ id: b.id, data: b.data })));
-    setElaboradoPor(currentBt.elaborado_por || '');
-    setCargoElaborado(currentBt.cargo_elaborado || '');
-    setConferidoPor(currentBt.conferido_por || '');
-    setCargoConferido(currentBt.cargo_conferido || '');
-    setSigSaved(true);
   }, [currentBt]);
 
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // Popula os campos de assinatura apenas quando o BT ATIVO TROCA (por id),
+  // nunca em recargas de fundo do mesmo BT — é isso que evita a oscilação
+  // (texto digitado sendo sobrescrito enquanto o usuário edita).
+  const loadedBtIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentBt || loadedBtIdRef.current === currentBt.id) return;
+    loadedBtIdRef.current = currentBt.id;
+    const base = {
+      elaborado: currentBt.elaborado_por || '',
+      cargoElab: currentBt.cargo_elaborado || '',
+      conferido: currentBt.conferido_por || '',
+      cargoConf: currentBt.cargo_conferido || '',
+    };
+    setElaboradoPor(base.elaborado);
+    setCargoElaborado(base.cargoElab);
+    setConferidoPor(base.conferido);
+    setCargoConferido(base.cargoConf);
+    setSigBaseline(base);
+  }, [currentBt]);
 
   // Busca o BT anterior (data imediatamente anterior à do BT atual) para importar assinaturas
   const fetchBtAnterior = useCallback(async () => {
@@ -84,16 +106,27 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
   }, [fetchBtAnterior]);
 
   // Herança automática: ao abrir um BT novo com campos vazios, importa do BT
-  // anterior e já grava no banco — o fechamento não exige reabrir o modal e
-  // salvar quando os dados herdados estão completos.
+  // anterior e já grava no banco. Executa UMA VEZ por BT (ref), para não
+  // re-preencher campos que o usuário apagou de propósito para redigitar.
+  const importedSigBtIdRef = useRef<string | null>(null);
   const handleImportSignatures = async () => {
     if (!btAnterior || !currentBt) return;
+    if (importedSigBtIdRef.current === currentBt.id) return;
     const next = {
       elaborado: !elaboradoPor.trim() ? (btAnterior.elaborado_por || '') : elaboradoPor,
       cargoElab: !cargoElaborado.trim() ? (btAnterior.cargo_elaborado || '') : cargoElaborado,
       conferido: !conferidoPor.trim() ? (btAnterior.conferido_por || '') : conferidoPor,
       cargoConf: !cargoConferido.trim() ? (btAnterior.cargo_conferido || '') : cargoConferido,
     };
+    // Nada a importar (tudo já preenchido ou BT anterior sem assinaturas): não grava.
+    if (
+      next.elaborado === elaboradoPor && next.cargoElab === cargoElaborado &&
+      next.conferido === conferidoPor && next.cargoConf === cargoConferido
+    ) {
+      importedSigBtIdRef.current = currentBt.id;
+      return;
+    }
+    importedSigBtIdRef.current = currentBt.id;
     setElaboradoPor(next.elaborado);
     setCargoElaborado(next.cargoElab);
     setConferidoPor(next.conferido);
@@ -103,6 +136,12 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
       cargo_elaborado: next.cargoElab.trim() || null,
       conferido_por: next.conferido.trim() || null,
       cargo_conferido: next.cargoConf.trim() || null,
+    });
+    setSigBaseline({
+      elaborado: next.elaborado.trim(),
+      cargoElab: next.cargoElab.trim(),
+      conferido: next.conferido.trim(),
+      cargoConf: next.cargoConf.trim(),
     });
     await refreshBt();
   };
@@ -265,22 +304,26 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
       conferido_por: conferidoPor.trim() || null,
       cargo_conferido: cargoConferido.trim() || null,
     });
-    await refreshBt();
     setSavingSig(false);
-    setSigSaved(true);
+    // Baseline passa a ser o que acabou de ser gravado: os campos continuam
+    // editáveis e a comparação de "alterado" parte do novo estado salvo.
+    setSigBaseline({
+      elaborado: elaboradoPor.trim(),
+      cargoElab: cargoElaborado.trim(),
+      conferido: conferidoPor.trim(),
+      cargoConf: cargoConferido.trim(),
+    });
   };
 
-  // Antes de Validar/Fechar: se houver assinaturas digitadas não salvas
-  // (algum campo difere do que está gravado no BT), exige confirmação.
+  // Alterado de verdade: algum campo difere (após normalização) do que está
+  // gravado no banco. Digitar e voltar ao original NÃO é alteração.
   const signaturesDirty = (() => {
-    if (sigSaved) return false;
-    const cur = currentBt;
-    if (!cur) return false;
+    const norm = (v: string) => v.trim();
     return (
-      (elaboradoPor.trim() || null) !== (cur.elaborado_por || null) ||
-      (cargoElaborado.trim() || null) !== (cur.cargo_elaborado || null) ||
-      (conferidoPor.trim() || null) !== (cur.conferido_por || null) ||
-      (cargoConferido.trim() || null) !== (cur.cargo_conferido || null)
+      norm(elaboradoPor) !== sigBaseline.elaborado ||
+      norm(cargoElaborado) !== sigBaseline.cargoElab ||
+      norm(conferidoPor) !== sigBaseline.conferido ||
+      norm(cargoConferido) !== sigBaseline.cargoConf
     );
   })();
 
@@ -459,19 +502,19 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Elaborado por</p>
             <Field label="Nome">
-              <Input value={elaboradoPor} onChange={(e) => { setElaboradoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" />
+              <Input value={elaboradoPor} onChange={(e) => setElaboradoPor(e.target.value)} placeholder="Nome do responsável" />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoElaborado} onChange={(e) => { setCargoElaborado(e.target.value); setSigSaved(false); }} placeholder="Ex: Tesoureiro" />
+              <Input value={cargoElaborado} onChange={(e) => setCargoElaborado(e.target.value)} placeholder="Ex: Tesoureiro" />
             </Field>
           </div>
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conferido por</p>
             <Field label="Nome">
-              <Input value={conferidoPor} onChange={(e) => { setConferidoPor(e.target.value); setSigSaved(false); }} placeholder="Nome do responsável" />
+              <Input value={conferidoPor} onChange={(e) => setConferidoPor(e.target.value)} placeholder="Nome do responsável" />
             </Field>
             <Field label="Cargo">
-              <Input value={cargoConferido} onChange={(e) => { setCargoConferido(e.target.value); setSigSaved(false); }} placeholder="Ex: Diretor" />
+              <Input value={cargoConferido} onChange={(e) => setCargoConferido(e.target.value)} placeholder="Ex: Diretor" />
             </Field>
           </div>
         </div>
