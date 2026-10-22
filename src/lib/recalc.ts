@@ -29,12 +29,14 @@ export async function computeSaldoFinalConta(btId: string, acc: AccountLike): Pr
 }
 
 // BT imediatamente anterior a um dado BT (excluindo-o), por data e criação.
+// ESTRITO: data estritamente menor que a do novo BT — nunca o próprio último
+// BT do mesmo dia, que ainda não foi encerrado.
 export async function getBtAnterior(bt: { id: string; data: string }): Promise<{ id: string; data: string } | null> {
   const { data } = await supabase
     .from('bt_reports')
     .select('id, data')
     .neq('id', bt.id)
-    .lte('data', bt.data)
+    .lt('data', bt.data)
     .order('data', { ascending: false })
     .limit(1)
     .maybeSingle();

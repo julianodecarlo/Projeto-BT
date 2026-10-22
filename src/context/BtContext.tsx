@@ -2,9 +2,9 @@ import { createContext, useContext, useState, useEffect, type ReactNode, useCall
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
+import { sortAccounts } from '@/lib/sortAccounts';
 import { validarBtCentral as runValidacao, type PendenciaItem } from '@/lib/validacao';
 import { fetchValidacaoData } from '@/lib/btData';
-import { sortAccounts } from '@/lib/sortAccounts';
 import {
   listAccounts,
   fetchBt,
@@ -105,6 +105,10 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (!created) return null;
     try {
       await transposeSaldos(created);
+      // Após transpor, garante que a cadeia de saldos do novo BT parte EXATA
+      // da âncora transposta (saldo final do BT anterior).
+      const accs = sortAccounts(await listAccounts());
+      await forceRecalcBtSaldos(created, accs);
     } catch (err) {
       console.error('Erro na transposição de saldos:', err);
     }

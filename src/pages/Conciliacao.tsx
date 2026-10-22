@@ -93,12 +93,21 @@ export default function Conciliacao() {
   }, [currentBt, paymentData]);
 
   const getAccount = (id: string) => accounts.find(a => a.id === id);
+  // Saldo Orçamentário = MESMA fórmula do Saldo Final da aba Movimentações,
+  // independente de ordem das linhas: âncora "Saldo Anterior" + entradas − saídas.
   const getAccountSaldoOrcamentario = (accId: string): number => {
     const acc = getAccount(accId);
     if (!acc) return 0;
     const accTxs = transactions.filter(t => t.account_id === accId);
     if (accTxs.length === 0) return acc.saldo_inicial;
-    return accTxs[accTxs.length - 1].saldo_final;
+    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
+    let saldo = toDecimal(anchor ? (anchor.saldo_anterior || 0) : acc.saldo_inicial || 0);
+    for (const t of accTxs) {
+      if (t.descricao === 'Saldo Anterior') continue;
+      const v = toDecimal(t.valor || 0);
+      saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
+    }
+    return saldo.toNumber();
   };
 
   // FOTO ESTÁTICA POR BT: usa a fonte única (reconStatus) — entram pendências

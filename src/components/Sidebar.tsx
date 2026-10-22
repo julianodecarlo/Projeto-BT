@@ -1,4 +1,4 @@
-import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText, Save, BadgeCheck, Lock, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText, Save, BadgeCheck, Lock, AlertTriangle, Check } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Modal from './ui/Modal';
 import { Button } from './ui/Field';
@@ -21,6 +21,9 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
   const [pendencias, setPendencias] = useState<PendenciaItem[] | null>(null);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [pendingNavigate, setPendingNavigate] = useState<PageKey | null>(null);
+  // Fluxo do botão Salvar: salvando → confirmação visual → navega.
+  const [savingPending, setSavingPending] = useState(false);
+  const [saveSucceeded, setSaveSucceeded] = useState(false);
   const [guardTick, setGuardTick] = useState(0);
   void guardTick;
 
@@ -81,13 +84,12 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
   const handleNavigate = (page: PageKey) => {
     if (hasUnsavedGuard() && page !== current) {
       setPendingNavigate(page);
+      setSaveSucceeded(false);
       setShowUnsavedModal(true);
       return;
     }
     onNavigate(page);
   };
-
-  const [savingPending, setSavingPending] = useState(false);
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col h-screen sticky top-0">
@@ -192,56 +194,72 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
       )}
 
       {/* Modal de alterações não salvas (3 opções) */}
-      <Modal open={showUnsavedModal} onClose={() => { setShowUnsavedModal(false); setPendingNavigate(null); }} title="Alterações não salvas" maxWidth="max-w-md">
+      <Modal open={showUnsavedModal} onClose={() => { if (!savingPending) { setShowUnsavedModal(false); setPendingNavigate(null); setSaveSucceeded(false); } }} title="Alterações não salvas" maxWidth="max-w-md">
         <div className="space-y-4">
-          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <p className="text-sm text-amber-800 font-medium">
-              Você possui valores digitados que ainda não foram salvos. Deseja salvar antes de sair?
-            </p>
-          </div>
-          <div className="flex justify-end gap-2 pt-1 flex-wrap">
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                setShowUnsavedModal(false);
-                setSavingPending(true);
-                const ok = await runUnsavedSavers();
-                setSavingPending(false);
-                if (pendingNavigate) {
-                  onNavigate(pendingNavigate);
+          {saveSucceeded ? (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+              <Check className="w-5 h-5 text-emerald-600 shrink-0" />
+              <p className="text-sm text-emerald-800 font-medium">Salvo com sucesso!</p>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800 font-medium">
+                Você possui valores digitados que ainda não foram salvos. Deseja salvar antes de sair?
+              </p>
+            </div>
+          )}
+          {!saveSucceeded && (
+            <div className="flex justify-end gap-2 pt-1 flex-wrap">
+              <Button
+                onClick={async () => {
+                  setSavingPending(true);
+                  const ok = await runUnsavedSavers();
+                  setSavingPending(false);
+                  if (ok) {
+                    // Confirmação visível no modal; fecha e navega após 1,8s.
+                    setSaveSucceeded(true);
+                    window.setTimeout(() => {
+                      setSaveSucceeded(false);
+                      setShowUnsavedModal(false);
+                      const dest = pendingNavigate;
+                      setPendingNavigate(null);
+                      if (dest) onNavigate(dest);
+                    }, 1800);
+                  } else {
+                    showFeedback('Não foi possível salvar. Verifique os valores digitados.', 'error');
+                  }
+                }}
+                disabled={savingPending}
+              >
+                {savingPending ? 'Salvando...' : 'Salvar'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  discardUnsaved();
+                  setShowUnsavedModal(false);
+                  if (pendingNavigate) {
+                    onNavigate(pendingNavigate);
+                    setPendingNavigate(null);
+                  }
+                }}
+                disabled={savingPending}
+              >
+                Sair sem Salvar
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowUnsavedModal(false);
                   setPendingNavigate(null);
-                }
-                if (ok) showFeedback('Alterações salvas com sucesso!');
-                else showFeedback('Não foi possível salvar. Verifique os valores digitados.', 'error');
-              }}
-              disabled={savingPending}
-            >
-              {savingPending ? 'Salvando...' : 'Salvar'}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                discardUnsaved();
-                setShowUnsavedModal(false);
-                if (pendingNavigate) {
-                  onNavigate(pendingNavigate);
-                  setPendingNavigate(null);
-                }
-              }}
-            >
-              Sair sem Salvar
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowUnsavedModal(false);
-                setPendingNavigate(null);
-              }}
-            >
-              Continuar Editando
-            </Button>
-          </div>
+                }}
+                disabled={savingPending}
+              >
+                Continuar Editando
+              </Button>
+            </div>
+          )}
         </div>
       </Modal>
 
