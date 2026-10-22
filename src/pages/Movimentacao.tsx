@@ -65,34 +65,46 @@ export default function Movimentacao() {
     listConvenios().then(setConvenios);
   }, []);
 
-  // Estado "sujo": só é verdadeiro quando algum valor digitado DIFIERE do
-  // snapshot gravado no banco. Os inputs são pré-preenchidos com os valores
-  // já salvos (histórico editável), então comparar contra o snapshot evita
-  // o falso-positivo de "alterações não salvas" ao apenas carregar a aba.
-  const savedSnapshotRef = useRef<Record<string, RowInput>>({});
+  // Estado "sujo" (isDirty): só é verdadeiro quando algum valor digitado
+  // DIFERE do snapshot gravado no banco. A comparação é feita campo a campo,
+  // normalizada em centavos (conversão estrita de tipos + sanitização), nunca
+  // por referência de objeto — objetos novos a cada render seriam sempre "diferentes".
+  // Snapshot do que está gravado no banco (estado reativo). A comparação do
+  // dirty state é sempre contra este estado, nunca por referência de objeto.
+  const [savedSnapshot, setSavedSnapshot] = useState<Record<string, RowInput>>({});
 
-  const sameNumber = (a: string, b: string) => {
-    const na = parseFloat(a);
-    const nb = parseFloat(b);
-    return (isNaN(na) || na === 0 ? 0 : na) === (isNaN(nb) || nb === 0 ? 0 : nb);
+  // Normaliza "1.234,56" / "1234.56" / "" / "abc" para centavos inteiros.
+  const toCents = (raw: string | undefined): number => {
+    const s = String(raw ?? '').trim().replace(/\./g, '').replace(',', '.');
+    const n = parseFloat(s);
+    if (isNaN(n) || n === 0) return 0;
+    return Math.round(n * 100);
   };
 
   const hasUnsavedInputs = useMemo(
-    () => Object.entries(inputs).some(([accId, row]) => {
-      const saved = savedSnapshotRef.current[accId] || { vigente: '', restos_pagar: '', diversos_credores: '' };
+    () => Object.keys(inputs).some(accId => {
+      const row = inputs[accId];
+      const saved = savedSnapshot[accId];
       return (
-        !sameNumber(row.vigente || '', saved.vigente || '') ||
-        !sameNumber(row.restos_pagar || '', saved.restos_pagar || '') ||
-        !sameNumber(row.diversos_credores || '', saved.diversos_credores || '')
+        toCents(row?.vigente) !== toCents(saved?.vigente) ||
+        toCents(row?.restos_pagar) !== toCents(saved?.restos_pagar) ||
+        toCents(row?.diversos_credores) !== toCents(saved?.diversos_credores)
       );
     }),
-    [inputs]
+    [inputs, savedSnapshot]
   );
 
-  // Notifica a barreira global de navegação; ao salvar, a barreira é liberada.
+  // Sincroniza o guard global SEMPRE que o cálculo é reavaliado: se
+  // hasRealChanges for false, a navegação entre abas fica livre.
   useEffect(() => {
     setUnsavedGuard('movimentacao', hasUnsavedInputs);
   }, [hasUnsavedInputs]);
+
+  // Ao desmontar a aba (troca de aba concluída), o guard é resetado: sem
+  // alterações pendentes remanescentes, nenhuma caixa de diálogo pode disparar.
+  useEffect(() => {
+    return () => setUnsavedGuard('movimentacao', false);
+  }, []);
 
   // Registra o salvamento da tela: executado pela barreira de navegação
   // quando o usuário escolhe "Salvar" no aviso de alterações não salvas.
@@ -132,7 +144,21 @@ export default function Movimentacao() {
   };
 
   const discardInputs = () => {
-    buildInputState(transactions);
+    const state: Record<string, RowInput> = {};
+    for (const acc of accounts) {
+      state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
+    }
+    for (const tx of transactions) {
+      if (tx.descricao === 'Saldo Anterior') continue;
+      if (tx.tipo != null) continue;
+      if (!state[tx.account_id]) state[tx.account_id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
+      const key = tx.tipo_orcamento || 'vigente';
+      if (key in state[tx.account_id]) {
+        state[tx.account_id][key as keyof RowInput] = String(tx.valor || '');
+      }
+    }
+    setSavedSnapshot(state);
+    setInputs(state);
     setUnsavedGuard('movimentacao', false);
   };
 
@@ -157,10 +183,12 @@ export default function Movimentacao() {
         state[tx.account_id][key as keyof RowInput] = String(tx.valor || '');
       }
     }
-    // Snapshot do que está gravado: a flag de alterações não salvas compara
-    // os valores digitados contra ESTE estado, não contra zero.
-    savedSnapshotRef.current = { ...state };
+    // Snapshot do que está gravado: o dirty state compara os valores digitados
+    // contra ESTE estado. Carregamento do BT: guard inicia liberado.
+    setSavedSnapshot(state);
     setInputs(state);
+    // Carregamento do BT: sem edições pendentes, o guard inicia liberado.
+    setUnsavedGuard('movimentacao', false);
   };
 
   useEffect(() => {
@@ -173,8 +201,9 @@ export default function Movimentacao() {
       for (const acc of accounts) {
         state[acc.id] = { vigente: '', restos_pagar: '', diversos_credores: '' };
       }
-      savedSnapshotRef.current = { ...state };
+      setSavedSnapshot(state);
       setInputs(state);
+      setUnsavedGuard('movimentacao', false);
     }
   }, [accounts, transactions.length]);
 
