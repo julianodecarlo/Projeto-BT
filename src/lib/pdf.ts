@@ -1,5 +1,5 @@
 import { fetchPdfData } from './btData';
-import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento } from './format';
+import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento, toDecimal } from './format';
 import { calcularStatusConciliacao, pendenciasPorConta } from './reconStatus';
 import { sortAccounts } from './sortAccounts';
 import type {
@@ -34,28 +34,65 @@ export function generatePdfHtml(data: PdfData): string {
   const totalEntradas = toNumber(sumDecimal(transactions.filter(t => t.tipo_movimento === 'entrada').map(t => t.valor)));
   const totalSaidas = toNumber(sumDecimal(transactions.filter(t => t.tipo_movimento === 'saida').map(t => t.valor)));
 
-  // Account sections
+  // Account sections — ordem lógica por conta:
+  // 1. Saldo Anterior (Saldo Inicial) · 2. Depósitos · 3. Transferências entre
+  // Contas · 4. Orçamento Vigente · 5. Restos a Pagar · 6. Diversos Credores ·
+  // 7. Saldo Final. A coluna Saldo é progressiva linha a linha:
+  // Saldo(N) = Saldo(N-1) ± Valor(N), partindo do saldo ancorado.
+  const rankMovimento = (t: Transaction): number => {
+    if (t.descricao === 'Saldo Anterior') return 0;
+    if (t.tipo === 'deposito_anulacao') return 1;
+    if (t.tipo != null) return 2; // repasses e transferências entre contas
+    if (t.tipo_orcamento === 'vigente') return 3;
+    if (t.tipo_orcamento === 'restos_pagar') return 4;
+    return 5; // diversos_credores
+  };
+
   const accountSections = activeAccounts.map(acc => {
     const accTxs = transactions.filter(t => t.account_id === acc.id);
-    const saldoAtual = accTxs.length > 0 ? accTxs[accTxs.length - 1].saldo_final : acc.saldo_inicial;
-    const rows = accTxs.length === 0
+    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
+    const saldoInicial = anchor ? (anchor.saldo_anterior || 0) : (acc.saldo_inicial || 0);
+
+    const ordered = [...accTxs].sort(
+      (a, b) => rankMovimento(a) - rankMovimento(b) || (a.ordem ?? 0) - (b.ordem ?? 0)
+    );
+
+    // Saldo progressivo: cada movimentação ajusta o saldo da linha anterior.
+    let running = toDecimal(saldoInicial);
+    const lines = ordered.map(t => {
+      const v = toDecimal(t.valor || 0);
+      if (t.descricao !== 'Saldo Anterior') {
+        running = t.tipo_movimento === 'entrada' ? running.plus(v) : running.minus(v);
+      }
+      return { t, saldo: running.toNumber() };
+    });
+    const saldoFinal = running.toNumber();
+
+    const rows = lines.length === 0
       ? '<tr><td colspan="4" style="text-align:center;padding:12px;color:#94a3b8;">Sem movimentações</td></tr>'
-      : accTxs.map(t => `
+      : lines.map(({ t, saldo }) => `
         <tr>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${t.descricao}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#64748b;">${rotuloTipoLancamento(t, acc.categoria)}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;">
-            ${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.valor)}
+            ${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.descricao === 'Saldo Anterior' ? saldoInicial : t.valor)}
           </td>
-          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:500;">${formatCurrency(t.saldo_final)}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:500;">${formatCurrency(saldo)}</td>
         </tr>
-      `).join('');
+      `).join('') + `
+        <tr>
+          <td style="padding:6px 10px;border-top:2px solid #1e293b;font-weight:700;">Saldo Final</td>
+          <td style="padding:6px 10px;border-top:2px solid #1e293b;font-size:11px;color:#64748b;font-weight:700;">Saldo Final</td>
+          <td style="padding:6px 10px;border-top:2px solid #1e293b;text-align:right;color:#059669;font-weight:600;">+${formatCurrency(0)}</td>
+          <td style="padding:6px 10px;border-top:2px solid #1e293b;text-align:right;font-weight:700;">${formatCurrency(saldoFinal)}</td>
+        </tr>
+      `;
 
     return `
       <div style="margin-bottom:20px;">
         <h3 style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px;padding:8px 12px;background:#f8fafc;border-radius:6px;display:flex;justify-content:space-between;">
           <span>${acc.nome} ${acc.codigo ? `(${acc.codigo})` : ''}</span>
-          <span>Saldo: ${formatCurrency(saldoAtual)}</span>
+          <span>Saldo: ${formatCurrency(saldoFinal)}</span>
         </h3>
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
           <thead>
@@ -162,6 +199,45 @@ export function generatePdfHtml(data: PdfData): string {
 
   const statusLabel = bt.status === 'fechado' ? 'FECHADO' : bt.status === 'validado' ? 'VALIDADO' : 'RASCUNHO';
   const statusColor = bt.status === 'fechado' ? '#059669' : bt.status === 'validado' ? '#d97706' : '#94a3b8';
+
+  // Resumo por Subalínea: consolidação das subalíneas do Controle da Receita
+  // (contábil + financeira), exibida após as tabelas de Receitas Próprias.
+  const subalineaMap = new Map<string, { codigo: string; nome: string; contabil: number; financeira: number }>();
+  for (const r of revenues) {
+    const partes = r.subalinea.split(' - ');
+    const codigo = /^\d+$/.test(partes[0].trim()) ? partes[0].trim() : '—';
+    const nome = /^\d+$/.test(partes[0].trim()) ? partes.slice(1).join(' - ').trim() : r.subalinea;
+    const entry = subalineaMap.get(r.subalinea) || { codigo, nome, contabil: 0, financeira: 0 };
+    if (r.tipo === 'contabil') entry.contabil = toDecimal(entry.contabil).plus(toDecimal(r.saldo_final_contabil)).toNumber();
+    else entry.financeira = toDecimal(entry.financeira).plus(toDecimal(r.saldo_final_financeiro)).toNumber();
+    subalineaMap.set(r.subalinea, entry);
+  }
+  const subalineas = [...subalineaMap.values()].sort(
+    (a, b) => (a.codigo === '—' ? 1 : 0) - (b.codigo === '—' ? 1 : 0) ||
+      (a.codigo !== '—' && b.codigo !== '—' ? Number(a.codigo) - Number(b.codigo) : 0)
+  );
+  const totalGeralSubalineas = toNumber(sumDecimal(
+    subalineas.map(s => toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber())
+  ));
+  const subalineaRows = subalineas.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:12px;color:#94a3b8;">Nenhuma subalínea registrada</td></tr>'
+    : subalineas.map(s => {
+        const total = toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber();
+        return `
+      <tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${s.codigo}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${s.nome}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(s.contabil)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${formatCurrency(s.financeira)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;">${formatCurrency(total)}</td>
+      </tr>
+    `;
+      }).join('') + `
+      <tr>
+        <td colspan="4" style="padding:8px 10px;background:#f8fafc;font-weight:700;text-align:right;">Saldo Total Geral</td>
+        <td style="padding:8px 10px;background:#f8fafc;font-weight:700;text-align:right;">${formatCurrency(totalGeralSubalineas)}</td>
+      </tr>
+    `;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -312,6 +388,22 @@ export function generatePdfHtml(data: PdfData): string {
         </tr>
       </thead>
       <tbody>${revFinRows}</tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Resumo por Subalínea</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Código</th>
+          <th>Subalínea</th>
+          <th style="text-align:right;">Saldo Contábil</th>
+          <th style="text-align:right;">Saldo Financeiro</th>
+          <th style="text-align:right;">Total</th>
+        </tr>
+      </thead>
+      <tbody>${subalineaRows}</tbody>
     </table>
   </div>
 
