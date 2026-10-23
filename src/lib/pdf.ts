@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 import { fetchPdfData } from './btData';
 import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento, toDecimal } from './format';
 import { calcularStatusConciliacao, pendenciasPorConta } from './reconStatus';
@@ -59,10 +60,12 @@ export function generatePdfHtml(data: PdfData): string {
 
     // Saldo progressivo: cada movimentação ajusta o saldo da linha anterior.
     let running = toDecimal(saldoInicial);
+    let liquidoMovimentos = new Decimal(0);
     const lines = ordered.map(t => {
       const v = toDecimal(t.valor || 0);
       if (t.descricao !== 'Saldo Anterior') {
         running = t.tipo_movimento === 'entrada' ? running.plus(v) : running.minus(v);
+        liquidoMovimentos = t.tipo_movimento === 'entrada' ? liquidoMovimentos.plus(v) : liquidoMovimentos.minus(v);
       }
       return { t, saldo: running.toNumber() };
     });
@@ -74,8 +77,8 @@ export function generatePdfHtml(data: PdfData): string {
         <tr>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${t.descricao}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#64748b;">${rotuloTipoLancamento(t, acc.categoria)}</td>
-          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;">
-            ${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.descricao === 'Saldo Anterior' ? saldoInicial : t.valor)}
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;${t.descricao === 'Saldo Anterior' ? 'color:#94a3b8;' : `color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;`}>
+            ${t.descricao === 'Saldo Anterior' ? '—' : `${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.valor)}`}
           </td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:500;">${formatCurrency(saldo)}</td>
         </tr>
@@ -83,7 +86,7 @@ export function generatePdfHtml(data: PdfData): string {
         <tr>
           <td style="padding:6px 10px;border-top:2px solid #1e293b;font-weight:700;">Saldo Final</td>
           <td style="padding:6px 10px;border-top:2px solid #1e293b;font-size:11px;color:#64748b;font-weight:700;">Saldo Final</td>
-          <td style="padding:6px 10px;border-top:2px solid #1e293b;text-align:right;color:#059669;font-weight:600;">+${formatCurrency(0)}</td>
+          <td style="padding:6px 10px;border-top:2px solid #1e293b;text-align:right;font-weight:600;color:${liquidoMovimentos.isNegative() ? '#d97706' : '#059669'};">${liquidoMovimentos.isZero() ? '—' : `${liquidoMovimentos.isNegative() ? '-' : '+'}${formatCurrency(liquidoMovimentos.abs().toNumber())}`}</td>
           <td style="padding:6px 10px;border-top:2px solid #1e293b;text-align:right;font-weight:700;">${formatCurrency(saldoFinal)}</td>
         </tr>
       `;
@@ -202,19 +205,24 @@ export function generatePdfHtml(data: PdfData): string {
 
   // Resumo por Subalínea: consolidação das subalíneas do Controle da Receita
   // (contábil + financeira), exibida após as tabelas de Receitas Próprias.
+  // Mapeamento idêntico à aba Controle da Receita: rótulo gravado é
+  // "<codigo> - <descricao>", ex. "1325.01.01 - Fundo de Investimento...".
+  const parseSubLabel = (label: string): { codigo: string; nome: string } => {
+    const idx = label.indexOf(' - ');
+    return idx === -1
+      ? { codigo: label, nome: label }
+      : { codigo: label.slice(0, idx).trim(), nome: label.slice(idx + 3).trim() };
+  };
   const subalineaMap = new Map<string, { codigo: string; nome: string; contabil: number; financeira: number }>();
   for (const r of revenues) {
-    const partes = r.subalinea.split(' - ');
-    const codigo = /^\d+$/.test(partes[0].trim()) ? partes[0].trim() : '—';
-    const nome = /^\d+$/.test(partes[0].trim()) ? partes.slice(1).join(' - ').trim() : r.subalinea;
+    const { codigo, nome } = parseSubLabel(r.subalinea);
     const entry = subalineaMap.get(r.subalinea) || { codigo, nome, contabil: 0, financeira: 0 };
     if (r.tipo === 'contabil') entry.contabil = toDecimal(entry.contabil).plus(toDecimal(r.saldo_final_contabil)).toNumber();
     else entry.financeira = toDecimal(entry.financeira).plus(toDecimal(r.saldo_final_financeiro)).toNumber();
     subalineaMap.set(r.subalinea, entry);
   }
-  const subalineas = [...subalineaMap.values()].sort(
-    (a, b) => (a.codigo === '—' ? 1 : 0) - (b.codigo === '—' ? 1 : 0) ||
-      (a.codigo !== '—' && b.codigo !== '—' ? Number(a.codigo) - Number(b.codigo) : 0)
+  const subalineas = [...subalineaMap.values()].sort((a, b) =>
+    `${a.codigo} - ${a.nome}`.localeCompare(`${b.codigo} - ${b.nome}`, undefined, { numeric: true, sensitivity: 'base' })
   );
   const totalGeralSubalineas = toNumber(sumDecimal(
     subalineas.map(s => toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber())
