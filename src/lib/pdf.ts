@@ -224,12 +224,16 @@ export function generatePdfHtml(data: PdfData): string {
   const subalineas = [...subalineaMap.values()].sort((a, b) =>
     `${a.codigo} - ${a.nome}`.localeCompare(`${b.codigo} - ${b.nome}`, undefined, { numeric: true, sensitivity: 'base' })
   );
+  const subalineasComSaldo = subalineas.filter(s =>
+    toDecimal(s.contabil).plus(toDecimal(s.financeira)).isZero() === false ||
+    s.contabil !== 0 || s.financeira !== 0
+  );
   const totalGeralSubalineas = toNumber(sumDecimal(
-    subalineas.map(s => toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber())
+    subalineasComSaldo.map(s => toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber())
   ));
-  const subalineaRows = subalineas.length === 0
-    ? '<tr><td colspan="5" style="text-align:center;padding:12px;color:#94a3b8;">Nenhuma subalínea registrada</td></tr>'
-    : subalineas.map(s => {
+  const subalineaRows = subalineasComSaldo.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:12px;color:#94a3b8;">Nenhuma subalínea com saldo</td></tr>'
+    : subalineasComSaldo.map(s => {
         const total = toDecimal(s.contabil).plus(toDecimal(s.financeira)).toNumber();
         return `
       <tr>
