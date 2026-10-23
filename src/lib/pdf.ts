@@ -77,8 +77,8 @@ export function generatePdfHtml(data: PdfData): string {
         <tr>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${t.descricao}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#64748b;">${rotuloTipoLancamento(t, acc.categoria)}</td>
-          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;${t.descricao === 'Saldo Anterior' ? 'color:#94a3b8;' : `color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;`}>
-            ${t.descricao === 'Saldo Anterior' ? '—' : `${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.valor)}`}
+          <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;${t.descricao === 'Saldo Anterior' ? '' : `color:${t.tipo_movimento === 'entrada' ? '#059669' : '#d97706'};font-weight:600;`}">
+            ${t.descricao === 'Saldo Anterior' ? '' : `${t.tipo_movimento === 'entrada' ? '+' : '-'}${formatCurrency(t.valor)}`}
           </td>
           <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:500;">${formatCurrency(saldo)}</td>
         </tr>
