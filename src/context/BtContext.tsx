@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, type ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, type ReactNode, useCallback } from 'react';
 import { seedDefaultAccounts } from '@/lib/seed';
 import { transposeSaldos } from '@/lib/transpose';
 import { forceRecalcBtSaldos } from '@/lib/recalc';
@@ -83,7 +83,8 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (!currentBt) return;
     const bt = await fetchBt(currentBt.id);
     if (bt) setCurrentBt(bt);
-  }, [currentBt, setCurrentBt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBt?.id, setCurrentBt]);
 
   // Fonte única das conciliações do BT ativo: o Fechamento escuta este estado
   // e reavalia as validações em tempo real quando uma conta é conciliada.
@@ -94,7 +95,8 @@ export function BtProvider({ children }: { children: ReactNode }) {
     }
     const { fetchReconciliations } = await import('@/services/reconciliationService');
     setReconciliations(await fetchReconciliations(currentBt.id));
-  }, [currentBt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBt?.id]);
 
   useEffect(() => {
     refreshReconciliations();
@@ -191,8 +193,10 @@ export function BtProvider({ children }: { children: ReactNode }) {
     if (!ok) return false;
     if (bt) {
       const remaining = await listBtsFromData(bt.data);
-      for (const r of remaining) {
-        await cascadeRecalculate(r.id);
+      if (remaining.length > 0) {
+        // Um único recálculo em cadeia a partir do primeiro BT restante (data
+        // crescente) cobre todos os BTs seguintes — mesmo resultado de hoje.
+        await cascadeRecalculate(remaining[0].id);
       }
     }
     if (currentBt?.id === id) {
@@ -208,10 +212,12 @@ export function BtProvider({ children }: { children: ReactNode }) {
         await refreshAccounts();
         const lastBt = await fetchLatestBt();
         if (lastBt) {
-          // Re-sincronização forçada: recalcula do zero e sobrescreve os saldos
-          // salvos no banco para todas as contas do BT ativo antes de qualquer aba renderizar
-          const accs = sortAccounts(await listAccounts());
-          await forceRecalcBtSaldos(lastBt, accs);
+          // Re-sincronização forçada apenas em BTs abertos: BT fechado é
+          // imutável e não pode ter seus saldos gravados reescritos.
+          if (lastBt.status !== 'fechado') {
+            const accs = sortAccounts(await listAccounts());
+            await forceRecalcBtSaldos(lastBt, accs);
+          }
           setCurrentBt(lastBt);
         }
       } catch (err) {
@@ -222,8 +228,27 @@ export function BtProvider({ children }: { children: ReactNode }) {
     })();
   }, [refreshAccounts, setCurrentBt]);
 
+  const contextValue = useMemo(() => ({
+    currentBt,
+    accounts,
+    reconciliations,
+    refreshReconciliations,
+    loading,
+    setCurrentBt,
+    refreshAccounts,
+    createBt,
+    updateBt,
+    reopenBt,
+    deleteBt,
+    refreshBt,
+    cascadeRecalculate,
+    salvarBtRascunho,
+    validarBtAtual,
+    fecharBtAtual,
+  }), [currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate, salvarBtRascunho, validarBtAtual, fecharBtAtual]);
+
   return (
-    <BtContext.Provider value={{ currentBt, accounts, reconciliations, refreshReconciliations, loading, setCurrentBt, refreshAccounts, createBt, updateBt, reopenBt, deleteBt, refreshBt, cascadeRecalculate, salvarBtRascunho, validarBtAtual, fecharBtAtual }}>
+    <BtContext.Provider value={contextValue}>
       {children}
     </BtContext.Provider>
   );

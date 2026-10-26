@@ -40,10 +40,10 @@ export async function fetchPdfData(btId: string): Promise<PdfData | null> {
     supabase.from('accounts').select('*').order('ordem'),
     supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem'),
     supabase.from('revenue_own').select('*').eq('bt_report_id', btId).order('ordem'),
-    supabase.from('cheques').select('*'),
-    supabase.from('deposits_pending').select('*'),
-    supabase.from('payments_pending').select('*'),
-    supabase.from('pendency_resolutions').select('*'),
+    supabase.from('cheques').select('id, bt_report_id, account_id, data_emissao, numero, valor, beneficiario'),
+    supabase.from('deposits_pending').select('id, bt_report_id, account_id, valor, descricao'),
+    supabase.from('payments_pending').select('id, bt_report_id, account_id, valor'),
+    supabase.from('pendency_resolutions').select('id, kind, ref_id, bt_report_id'),
     supabase.from('bt_reports').select('id, data'),
     supabase.from('reconciliation').select('*').eq('bt_report_id', btId),
   ]);
@@ -81,10 +81,10 @@ export async function fetchValidacaoData(
   const [txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = await Promise.all([
     supabase.from('transactions').select('*').eq('bt_report_id', btId).order('ordem', { ascending: true }),
     supabase.from('revenue_own').select('*').eq('bt_report_id', btId),
-    supabase.from('cheques').select('*'),
-    supabase.from('deposits_pending').select('*'),
-    supabase.from('payments_pending').select('*'),
-    supabase.from('pendency_resolutions').select('*'),
+    supabase.from('cheques').select('id, bt_report_id, account_id, data_emissao, numero, valor, beneficiario'),
+    supabase.from('deposits_pending').select('id, bt_report_id, account_id, valor, descricao'),
+    supabase.from('payments_pending').select('id, bt_report_id, account_id, valor'),
+    supabase.from('pendency_resolutions').select('id, kind, ref_id, bt_report_id'),
     supabase.from('bt_reports').select('id, data'),
   ]);
   return {

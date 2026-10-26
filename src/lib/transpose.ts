@@ -19,10 +19,10 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
   const convenios = await fetchConvenios();
 
   // ---- Contas bancárias: cria transação "Saldo Anterior" com o saldo carregado
+  const accRows: Record<string, unknown>[] = [];
   for (const acc of accounts) {
     const saldoInicial = await getSaldoAbertura(newBt, acc);
-
-    await supabase.from('transactions').insert({
+    accRows.push({
       bt_report_id: newBt.id,
       account_id: acc.id,
       descricao: 'Saldo Anterior',
@@ -35,34 +35,46 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
       ordem: 0,
     });
   }
+  if (accRows.length > 0) {
+    await supabase.from('transactions').insert(accRows);
+  }
 
   // ---- Receita Própria: cria linhas de saldo anterior (contábil + financeira)
+  // Saldos do BT anterior pré-buscados em lote (evita 1 consulta por subalínea)
   const subalinhas = await fetchSubalinhas();
+  const prevReceita = previousBt ? await fetchPrevReceitaSaldos(previousBt) : null;
+  const revRows: Record<string, unknown>[] = [];
   for (const sub of subalinhas) {
     const nome = `${sub.codigo} - ${sub.descricao}`;
-    const saldoAntContabil = previousBt
-      ? await getSaldoFinalReceita(previousBt, nome, 'contabil')
+    const saldoAntContabil = prevReceita
+      ? prevReceita.receitaPorNome.get(`${nome}|contabil`) ?? 0
       : 0;
-    const saldoAntFinanceira = previousBt
-      ? await getSaldoFinalReceita(previousBt, nome, 'financeira')
+    const saldoAntFinanceira = prevReceita
+      ? prevReceita.receitaPorNome.get(`${nome}|financeira`) ?? 0
       : 0;
 
     const rows = [
       { tipo: 'contabil', saldo_anterior: saldoAntContabil, arrecadacao: 0, saldo_final_contabil: saldoAntContabil, caixa: 0, bancos: 0, saldo_final_financeiro: 0, account_id: null },
       { tipo: 'financeira', saldo_anterior: saldoAntFinanceira, arrecadacao: 0, saldo_final_contabil: 0, caixa: 0, bancos: 0, saldo_final_financeiro: saldoAntFinanceira, account_id: null },
     ];
-    await supabase.from('revenue_own').insert(
-      rows.map((r) => ({ ...r, bt_report_id: newBt.id, subalinea: nome, ordem: 0 }))
-    );
+    for (const r of rows) {
+      revRows.push({ ...r, bt_report_id: newBt.id, subalinea: nome, ordem: 0 });
+    }
+  }
+  if (revRows.length > 0) {
+    await supabase.from('revenue_own').insert(revRows);
   }
 
   // ---- Convênios: snapshot das fontes (saldo anterior = final do BT anterior)
+  // Saldos do BT anterior pré-buscados em lote (evita 1 consulta por convênio)
+  const prevConvenios = previousBt ? await fetchPrevConvenioSaldos(previousBt) : null;
+  const convRows: Record<string, unknown>[] = [];
   for (const conv of convenios) {
     const saldos = previousBt
-      ? await getFontesFinal(previousBt, conv)
+      ? prevConvenios?.convenioPorId.get(conv.id) ?? { fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44 }
       : { fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44 };
 
-    await supabase.from('bt_convenios').insert({
+    convRows.push({
       bt_report_id: newBt.id,
       convenio_id: conv.id,
       fonte_5: saldos.fonte_5,
@@ -70,6 +82,9 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
       fonte_4: saldos.fonte_4,
       fonte_44: saldos.fonte_44,
     });
+  }
+  if (convRows.length > 0) {
+    await supabase.from('bt_convenios').insert(convRows);
   }
 }
 
@@ -95,40 +110,45 @@ async function fetchSubalinhas(): Promise<{ codigo: string; descricao: string }[
   return (data as { codigo: string; descricao: string }[]) || [];
 }
 
-async function getSaldoFinalReceita(bt: BtReport, subalinea: string, tipo: 'contabil' | 'financeira'): Promise<number> {
-  const field = tipo === 'contabil' ? 'saldo_final_contabil' : 'saldo_final_financeiro';
+// Pré-busca em lote dos saldos do BT anterior para receita própria.
+// Reproduz getSaldoFinalReceita: usa saldo_final_<tipo> se a linha existir,
+// senão o saldo_anterior da linha; se não há linha nenhuma, 0.
+async function fetchPrevReceitaSaldos(bt: BtReport): Promise<{ receitaPorNome: Map<string, number> }> {
+  const receitaPorNome = new Map<string, number>();
   const { data } = await supabase
     .from('revenue_own')
-    .select(field)
-    .eq('bt_report_id', bt.id)
-    .eq('subalinea', subalinea)
-    .eq('tipo', tipo)
-    .maybeSingle();
-  if (data) return ((data as Record<string, number>)[field] as number) || 0;
-
-  // Sem linha no BT anterior: carrega o saldo anterior da linha equivalente
-  const { data: linha } = await supabase
-    .from('revenue_own')
-    .select('saldo_anterior')
-    .eq('bt_report_id', bt.id)
-    .eq('subalinea', subalinea)
-    .eq('tipo', tipo)
-    .maybeSingle();
-  return linha ? ((linha as { saldo_anterior: number }).saldo_anterior || 0) : 0;
+    .select('subalinea, tipo, saldo_anterior, saldo_final_contabil, saldo_final_financeiro')
+    .eq('bt_report_id', bt.id);
+  const rows = (data || []) as { subalinea: string; tipo: string; saldo_anterior: number | null; saldo_final_contabil: number | null; saldo_final_financeiro: number | null }[];
+  // Mantém a primeira linha por (subalinea, tipo), como o maybeSingle original
+  for (const r of rows) {
+    const key = `${r.subalinea}|${r.tipo}`;
+    if (receitaPorNome.has(key)) continue;
+    const isContabil = r.tipo === 'contabil';
+    const fin = isContabil ? r.saldo_final_contabil : r.saldo_final_financeiro;
+    receitaPorNome.set(key, fin != null ? fin || 0 : r.saldo_anterior || 0);
+  }
+  return { receitaPorNome };
 }
 
-async function getFontesFinal(
-  bt: BtReport,
-  conv: Convenio
-): Promise<{ fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }> {
+// Pré-busca em lote dos saldos das fontes de convênio do BT anterior.
+// Reproduz getFontesFinal: usa o snapshot da tabela bt_convenios se existir,
+// senão o cadastro do convênio.
+async function fetchPrevConvenioSaldos(bt: BtReport): Promise<{ convenioPorId: Map<string, { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }> }> {
+  const convenioPorId = new Map<string, { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }>();
   const { data } = await supabase
     .from('bt_convenios')
-    .select('fonte_5, fonte_45, fonte_4, fonte_44')
-    .eq('bt_report_id', bt.id)
-    .eq('convenio_id', conv.id)
-    .maybeSingle();
-  if (data) {
-    return data as { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number };
+    .select('convenio_id, fonte_5, fonte_45, fonte_4, fonte_44')
+    .eq('bt_report_id', bt.id);
+  for (const r of (data || []) as { convenio_id: string; fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }[]) {
+    if (!convenioPorId.has(r.convenio_id)) {
+      convenioPorId.set(r.convenio_id, {
+        fonte_5: r.fonte_5,
+        fonte_45: r.fonte_45,
+        fonte_4: r.fonte_4,
+        fonte_44: r.fonte_44,
+      });
+    }
   }
-  return { fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44 };
+  return { convenioPorId };
 }

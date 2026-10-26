@@ -51,34 +51,82 @@ export async function getSaldoAbertura(bt: { id: string; data: string }, acc: Ac
   return fin !== null ? fin : (acc.saldo_inicial || 0);
 }
 
+// Tamanho dos lotes de UPDATE executados em paralelo (Promise.all).
+const UPDATE_BATCH = 50;
+
 // Recalcula do ZERO a cadeia saldo_anterior → saldo_final de cada conta,
 // ignorando os valores salvos no banco. A fórmula única é aplicada em cadeia:
 // SALDO FINAL = SALDO ANTERIOR + ENTRADAS (repasses, transferências recebidas,
 // depósitos, anulações, rendimentos) − SAÍDAS (colunas orçamentárias,
 // transferências enviadas). A abertura vem do saldo final do BT anterior.
 export async function forceRecalcBtSaldos(bt: { id: string; data: string }, accounts: AccountLike[]) {
-  for (const acc of accounts) {
-    const { data: txs, error } = await supabase
+  // BT anterior calculado UMA vez por chamada (não por conta)
+  const prev = await getBtAnterior(bt);
+
+  // Transações do BT e do BT anterior em uma consulta cada (todas as contas)
+  const btRes = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('bt_report_id', bt.id)
+    .order('ordem', { ascending: true });
+  if (btRes.error || !btRes.data) return;
+
+  let prevRows: Transaction[] = [];
+  if (prev) {
+    const prevRes = await supabase
       .from('transactions')
       .select('*')
-      .eq('bt_report_id', bt.id)
-      .eq('account_id', acc.id)
-      .order('ordem', { ascending: true });
-    if (error || !txs) continue;
+      .eq('bt_report_id', prev.id);
+    prevRows = (prevRes.data || []) as Transaction[];
+  }
 
-    let saldo = new Decimal(await getSaldoAbertura(bt, acc));
-    for (const raw of txs as Transaction[]) {
+  const txsByAcc = new Map<string, Transaction[]>();
+  for (const raw of btRes.data as Transaction[]) {
+    const list = txsByAcc.get(raw.account_id) ?? [];
+    list.push(raw);
+    txsByAcc.set(raw.account_id, list);
+  }
+  const prevByAcc = new Map<string, Transaction[]>();
+  for (const raw of prevRows) {
+    const list = prevByAcc.get(raw.account_id) ?? [];
+    list.push(raw);
+    prevByAcc.set(raw.account_id, list);
+  }
+
+  const normalizeIds: string[] = [];
+  const saldoUpdates: { id: string; saldo_anterior: number; saldo_final: number }[] = [];
+
+  for (const acc of accounts) {
+    const txs = txsByAcc.get(acc.id);
+    if (!txs) continue;
+
+    // Abertura = saldo final do BT anterior (mesma regra de getSaldoAbertura,
+    // calculada em memória a partir das transações já buscadas); sem BT anterior
+    // ou sem linhas no BT anterior, cai no saldo_inicial do cadastro.
+    let abertura = acc.saldo_inicial || 0;
+    const prevTxs = prev ? prevByAcc.get(acc.id) : undefined;
+    if (prev && prevTxs && prevTxs.length > 0) {
+      const anchor = prevTxs.find(t => t.descricao === 'Saldo Anterior');
+      let saldoPrev = new Decimal(anchor ? anchor.saldo_anterior || 0 : acc.saldo_inicial || 0);
+      for (const t of prevTxs) {
+        if (t.descricao === 'Saldo Anterior') continue;
+        const v = new Decimal(t.valor || 0);
+        saldoPrev = t.tipo_movimento === 'entrada' ? saldoPrev.plus(v) : saldoPrev.minus(v);
+      }
+      abertura = saldoPrev.toNumber();
+    }
+
+    let saldo = new Decimal(abertura);
+    for (const raw of txs) {
       // Normaliza anulações antigas gravadas como saída: anulação é estorno e SEMPRE credita
       if (raw.tipo === 'deposito_anulacao' && raw.tipo_movimento === 'saida') {
-        await supabase.from('transactions').update({ tipo_movimento: 'entrada' }).eq('id', raw.id);
+        normalizeIds.push(raw.id);
         raw.tipo_movimento = 'entrada';
       }
 
       if (raw.descricao === 'Saldo Anterior') {
         if (raw.saldo_anterior !== saldo.toNumber() || raw.saldo_final !== saldo.toNumber()) {
-          await supabase.from('transactions')
-            .update({ saldo_anterior: saldo.toNumber(), saldo_final: saldo.toNumber() })
-            .eq('id', raw.id);
+          saldoUpdates.push({ id: raw.id, saldo_anterior: saldo.toNumber(), saldo_final: saldo.toNumber() });
         }
         continue;
       }
@@ -89,11 +137,22 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
         : saldo.minus(valor);
 
       if (raw.saldo_anterior !== saldo.toNumber() || raw.saldo_final !== fin.toNumber()) {
-        await supabase.from('transactions')
-          .update({ saldo_anterior: saldo.toNumber(), saldo_final: fin.toNumber() })
-          .eq('id', raw.id);
+        saldoUpdates.push({ id: raw.id, saldo_anterior: saldo.toNumber(), saldo_final: fin.toNumber() });
       }
       saldo = fin;
     }
+  }
+
+  // UPDATEs apenas onde o valor diferir, executados em lotes com Promise.all
+  const tasks: (() => PromiseLike<unknown>)[] = [
+    ...normalizeIds.map(id => () =>
+      supabase.from('transactions').update({ tipo_movimento: 'entrada' }).eq('id', id)),
+    ...saldoUpdates.map(u => () =>
+      supabase.from('transactions')
+        .update({ saldo_anterior: u.saldo_anterior, saldo_final: u.saldo_final })
+        .eq('id', u.id)),
+  ];
+  for (let i = 0; i < tasks.length; i += UPDATE_BATCH) {
+    await Promise.all(tasks.slice(i, i + UPDATE_BATCH).map(run => run()));
   }
 }
