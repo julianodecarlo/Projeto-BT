@@ -4,16 +4,19 @@ import { supabase } from '@/lib/supabase';
 import { Button } from './ui/Field';
 
 const TABLES = [
-  'bt_reports',
   'accounts',
+  'bt_reports',
   'convenios',
   'convenio_sources',
+  'subalinhas',
   'transactions',
   'revenue_own',
-  'subalinhas',
   'cheques',
   'deposits_pending',
+  'payments_pending',
+  'pendency_resolutions',
   'reconciliation',
+  'bt_convenios',
 ] as const;
 
 const FALLBACK_KEY = 'bt_backup_fallback';
@@ -71,14 +74,37 @@ export function RestoreBackup({ onDone }: RestoreBackupProps) {
         throw new Error('Arquivo inválido: não contém dados de bt_reports.');
       }
 
-      // Ordem respeita dependências (pai antes de filho)
-      const offlineTables: string[] = [];
+      // ETAPA 1: apaga todas as tabelas na ordem inversa (filhos primeiro) ANTES
+      // de qualquer inserção — apagar contas/bt_reports depois de restaurar apagaria
+      // em cascata o que acabou de ser inserido.
+      const offline = new Set<string>();
       for (const table of [...TABLES].reverse()) {
+        try {
+          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        } catch (tableErr) {
+          if (isNetworkError(tableErr)) {
+            console.error(`Erro de rede ao limpar ${table}:`, tableErr);
+            offline.add(table);
+            continue;
+          }
+          throw tableErr;
+        }
+      }
+
+      // ETAPA 2: insere/upsert na ordem direta (pais antes de filhos)
+      const offlineTables: string[] = [];
+      for (const table of TABLES) {
         const rows = backup[table];
+        if (offline.has(table)) {
+          if (Array.isArray(rows) && rows.length > 0) {
+            saveFallback(table, rows);
+            offlineTables.push(table);
+          }
+          continue;
+        }
         if (!Array.isArray(rows) || rows.length === 0) continue;
         try {
-          // Limpa a tabela antes de reinserir (upsert por id mantém chaves)
-          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          // Upsert por id mantém chaves
           const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
           if (error) throw new Error(`Falha ao restaurar ${table}: ${error.message}`);
         } catch (tableErr) {

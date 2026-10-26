@@ -13,6 +13,28 @@ interface AccountModalProps {
   onClose: () => void;
 }
 
+async function checkHasHistory(acc: Account): Promise<boolean | null> {
+  try {
+    const [txMov, txSaldo, cheques, deposits, payments, recon, revenue, convenio] = await Promise.all([
+      supabase.from('transactions').select('id').eq('account_id', acc.id).neq('descricao', 'Saldo Anterior').limit(1),
+      supabase.from('transactions').select('id').eq('account_id', acc.id).eq('descricao', 'Saldo Anterior').or('saldo_anterior.neq.0,saldo_final.neq.0').limit(1),
+      supabase.from('cheques').select('id').eq('account_id', acc.id).limit(1),
+      supabase.from('deposits_pending').select('id').eq('account_id', acc.id).limit(1),
+      supabase.from('payments_pending').select('id').eq('account_id', acc.id).limit(1),
+      supabase.from('reconciliation').select('id').eq('account_id', acc.id).limit(1),
+      supabase.from('revenue_own').select('id').eq('account_id', acc.id).limit(1),
+      supabase.from('convenios').select('id').eq('finance_account_id', acc.id).limit(1),
+    ]);
+    for (const res of [txMov, txSaldo, cheques, deposits, payments, recon, revenue, convenio]) {
+      if (res.error) return null;
+      if ((res.data ?? []).length > 0) return true;
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
+
 const categoryLabels: Record<AccountCategory, string> = {
   movimento: 'Movimento',
   receita: 'Receita',
@@ -30,6 +52,9 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
   const [categoria, setCategoria] = useState<AccountCategory>('movimento');
   const [saldoInicial, setSaldoInicial] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
+  const [blockedAccount, setBlockedAccount] = useState<Account | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   const resetForm = () => {
     setEditing(null);
@@ -67,8 +92,35 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
     setSaving(false);
   };
 
-  const handleDelete = async (acc: Account) => {
-    await supabase.from('accounts').delete().eq('id', acc.id);
+  const handleDeleteClick = async (acc: Account) => {
+    setDeleteError('');
+    const hasHistory = await checkHasHistory(acc);
+    if (hasHistory === null) {
+      setDeleteError('Não foi possível verificar o histórico da conta. Tente novamente.');
+      return;
+    }
+    if (hasHistory) {
+      setBlockedAccount(acc);
+    } else {
+      setDeleteTarget(acc);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const hasHistory = await checkHasHistory(deleteTarget);
+    if (hasHistory === null) {
+      setDeleteTarget(null);
+      setDeleteError('Não foi possível verificar o histórico da conta. Tente novamente.');
+      return;
+    }
+    if (hasHistory) {
+      setBlockedAccount(deleteTarget);
+      setDeleteTarget(null);
+      return;
+    }
+    await supabase.from('accounts').delete().eq('id', deleteTarget.id);
+    setDeleteTarget(null);
     await refreshAccounts();
   };
 
@@ -140,7 +192,7 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => handleDelete(acc)}
+                  onClick={() => handleDeleteClick(acc)}
                   className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -154,6 +206,39 @@ export default function AccountModal({ open, onClose }: AccountModalProps) {
           <Button variant="secondary" onClick={onClose}>Concluir</Button>
         </div>
       </div>
+
+      <Modal open={blockedAccount !== null} onClose={() => setBlockedAccount(null)} title="Exclusão bloqueada" maxWidth="max-w-md">
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Esta conta possui movimentação ou vínculos no histórico e não pode ser excluída, para preservar a integridade dos dados. Desative a conta para que ela deixe de ser usada.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          {blockedAccount?.ativo && (
+            <Button onClick={() => { const acc = blockedAccount; setBlockedAccount(null); handleToggle(acc); }}>
+              Desativar conta
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => setBlockedAccount(null)}>Entendi</Button>
+        </div>
+      </Modal>
+
+      <Modal open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} title="Excluir conta" maxWidth="max-w-md">
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Excluir a conta '{deleteTarget?.nome}'? Esta conta não possui movimentações. A exclusão é irreversível.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+          <Button onClick={confirmDelete} className="!bg-red-600 hover:!bg-red-700">
+            Excluir Definitivamente
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal open={deleteError !== ''} onClose={() => setDeleteError('')} title="Atenção" maxWidth="max-w-sm">
+        <p className="text-sm text-slate-600 leading-relaxed">{deleteError}</p>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setDeleteError('')}>Entendi</Button>
+        </div>
+      </Modal>
     </Modal>
   );
 }

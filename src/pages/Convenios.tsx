@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Plus, Trash2, Handshake, FileText, Pencil, Wallet } from 'lucide-react';
 import { useBt } from '@/context/BtContext';
 import { Card, Button, Input, Field, Select, EmptyState, Badge } from '@/components/ui/Field';
+import Modal from '@/components/ui/Modal';
 import { formatCurrency, toDecimal } from '@/lib/format';
 import type { Convenio } from '@/types';
 import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
@@ -36,6 +37,7 @@ export default function Convenios() {
   const [fontes, setFontes] = useState<Record<FonteKey, string>>({ fonte_5: '', fonte_45: '', fonte_4: '', fonte_44: '' });
   const [financeAccountId, setFinanceAccountId] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Convenio | null>(null);
 
   const fetchConvenios = useCallback(async () => {
     setConvenios(await listConvenios());
@@ -77,6 +79,7 @@ export default function Convenios() {
   const totalGeral = (c: Convenio) => toDecimal(subtotalConvenio(c)).plus(toDecimal(subtotalContrapartida(c))).toNumber();
 
   const handleSave = async () => {
+    if (fechado) return;
     if (!nome.trim()) return;
     setSaving(true);
     const payload: ConvenioInput = {
@@ -99,6 +102,7 @@ export default function Convenios() {
 
   const handleDelete = async (id: string) => {
     await deleteConvenio(id);
+    setDeleteTarget(null);
     setConvenios(convenios.filter(c => c.id !== id));
   };
 
@@ -133,7 +137,7 @@ export default function Convenios() {
             <p className="text-xs text-slate-500 mt-0.5">Fontes orçamentárias 5/45 (Convênio) e 4/44 (Contrapartida)</p>
           </div>
         </div>
-        <Button onClick={() => { if (showForm) resetForm(); else setShowForm(true); }}>
+        <Button onClick={() => { if (showForm) resetForm(); else setShowForm(true); }} disabled={fechado}>
           <Plus className="w-4 h-4" /> {showForm ? 'Fechar Formulário' : 'Novo Convênio'}
         </Button>
       </Card>
@@ -189,7 +193,7 @@ export default function Convenios() {
 
           <div className="flex justify-end gap-2 mt-3">
             <Button variant="secondary" onClick={resetForm}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving || !nome.trim()}>
+            <Button onClick={handleSave} disabled={fechado || saving || !nome.trim()}>
               {saving ? 'Salvando...' : editing ? 'Atualizar Convênio' : 'Criar Convênio'}
             </Button>
           </div>
@@ -261,10 +265,10 @@ export default function Convenios() {
                       </td>
                       <td className="px-2 py-2.5">
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => startEdit(c)} className="p-1 text-slate-400 hover:text-blue-600">
+                          <button onClick={() => startEdit(c)} disabled={fechado} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => handleDelete(c.id)} className="p-1 text-slate-400 hover:text-red-500">
+                          <button onClick={() => setDeleteTarget(c)} disabled={fechado} className="p-1 text-slate-400 hover:text-red-500 disabled:opacity-40 disabled:cursor-not-allowed">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -290,6 +294,18 @@ export default function Convenios() {
           </div>
         )}
       </Card>
+
+      <Modal open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} title="Excluir Convênio" maxWidth="max-w-md">
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Excluir o convênio '{deleteTarget?.nome}'? Esta ação não pode ser desfeita.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+          <Button onClick={() => deleteTarget && handleDelete(deleteTarget.id)} className="!bg-red-600 hover:!bg-red-700">
+            Excluir
+          </Button>
+        </div>
+      </Modal>
     </div>
     </BtFechadoGuard>
     </>
