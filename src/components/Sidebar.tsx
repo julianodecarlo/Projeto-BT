@@ -269,7 +269,7 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
           <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <p className="text-sm text-amber-800 font-medium">
-              O BT não pode ser validado/fechado enquanto estas pendências existirem (exceto divergências de Convênios, que não impedem o fechamento).
+              O BT não pode ser validado/fechado enquanto estas pendências abaixo existirem.
             </p>
           </div>
           <ul className="space-y-2">
