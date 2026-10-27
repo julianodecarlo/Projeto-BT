@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import Decimal from 'decimal.js';
 import type { Transaction } from '@/types';
 
@@ -11,16 +12,25 @@ interface AccountLike {
 // âncora "Saldo Anterior" + somatório de entradas - somatório de saídas.
 // Retorna null se a conta não possui nenhuma linha no BT.
 export async function computeSaldoFinalConta(btId: string, acc: AccountLike): Promise<number | null> {
-  const { data: txs } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('bt_report_id', btId)
-    .eq('account_id', acc.id);
-  if (!txs || txs.length === 0) return null;
+  let txs: Transaction[];
+  try {
+    txs = await fetchAll<Transaction>((from, to) =>
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('bt_report_id', btId)
+        .eq('account_id', acc.id)
+        .order('id')
+        .range(from, to)
+    );
+  } catch {
+    return null;
+  }
+  if (txs.length === 0) return null;
 
-  const anchor = (txs as Transaction[]).find(t => t.descricao === 'Saldo Anterior');
+  const anchor = txs.find(t => t.descricao === 'Saldo Anterior');
   let saldo = new Decimal(anchor ? anchor.saldo_anterior || 0 : acc.saldo_inicial || 0);
-  for (const t of txs as Transaction[]) {
+  for (const t of txs) {
     if (t.descricao === 'Saldo Anterior') continue;
     const v = new Decimal(t.valor || 0);
     saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
@@ -64,24 +74,39 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
   const prev = await getBtAnterior(bt);
 
   // Transações do BT e do BT anterior em uma consulta cada (todas as contas)
-  const btRes = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('bt_report_id', bt.id)
-    .order('ordem', { ascending: true });
-  if (btRes.error || !btRes.data) return;
+  let btRes: Transaction[];
+  try {
+    btRes = await fetchAll<Transaction>((from, to) =>
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('bt_report_id', bt.id)
+        .order('ordem', { ascending: true })
+        .order('id')
+        .range(from, to)
+    );
+  } catch {
+    return;
+  }
 
   let prevRows: Transaction[] = [];
   if (prev) {
-    const prevRes = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('bt_report_id', prev.id);
-    prevRows = (prevRes.data || []) as Transaction[];
+    try {
+      prevRows = await fetchAll<Transaction>((from, to) =>
+        supabase
+          .from('transactions')
+          .select('*')
+          .eq('bt_report_id', prev.id)
+          .order('id')
+          .range(from, to)
+      );
+    } catch {
+      return;
+    }
   }
 
   const txsByAcc = new Map<string, Transaction[]>();
-  for (const raw of btRes.data as Transaction[]) {
+  for (const raw of btRes) {
     const list = txsByAcc.get(raw.account_id) ?? [];
     list.push(raw);
     txsByAcc.set(raw.account_id, list);

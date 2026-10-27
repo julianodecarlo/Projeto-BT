@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Download, Upload, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import { Button } from './ui/Field';
 
 const TABLES = [
@@ -41,9 +42,10 @@ export function exportBackup(): Promise<void> {
   return (async () => {
     const backup: Record<string, unknown> = { __version: 1 };
     for (const table of TABLES) {
-      const { data, error } = await supabase.from(table).select('*');
-      if (error) throw new Error(`Falha ao exportar ${table}: ${error.message}`);
-      backup[table] = data || [];
+      const rows = await fetchAll<Record<string, unknown>>((from, to) =>
+        supabase.from(table).select('*').order('id').range(from, to)
+      );
+      backup[table] = rows;
     }
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -104,9 +106,13 @@ export function RestoreBackup({ onDone }: RestoreBackupProps) {
         }
         if (!Array.isArray(rows) || rows.length === 0) continue;
         try {
-          // Upsert por id mantém chaves
-          const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
-          if (error) throw new Error(`Falha ao restaurar ${table}: ${error.message}`);
+          // Upsert por id mantém chaves; arrays grandes vão em blocos de 500
+          const UPSERT_CHUNK = 500;
+          for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+            const chunk = rows.slice(i, i + UPSERT_CHUNK);
+            const { error } = await supabase.from(table).upsert(chunk, { onConflict: 'id' });
+            if (error) throw new Error(`Falha ao restaurar ${table}: ${error.message}`);
+          }
         } catch (tableErr) {
           if (isNetworkError(tableErr)) {
             // Sem acesso ao banco: guarda no localStorage e segue com as demais

@@ -1,24 +1,39 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import { toDecimal } from '@/lib/format';
 import type { Transaction, FonteOrcamentaria } from '@/types';
 
 export async function listTransactions(btId: string): Promise<Transaction[]> {
-  const { data } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('bt_report_id', btId)
-    .order('ordem', { ascending: true });
-  return (data as Transaction[]) || [];
+  try {
+    return await fetchAll<Transaction>((from, to) =>
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('bt_report_id', btId)
+        .order('ordem', { ascending: true })
+        .order('id')
+        .range(from, to)
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function listAccountTransactions(btId: string, accId: string): Promise<Transaction[]> {
-  const { data } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('bt_report_id', btId)
-    .eq('account_id', accId)
-    .order('ordem', { ascending: true });
-  return (data as Transaction[]) || [];
+  try {
+    return await fetchAll<Transaction>((from, to) =>
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('bt_report_id', btId)
+        .eq('account_id', accId)
+        .order('ordem', { ascending: true })
+        .order('id')
+        .range(from, to)
+    );
+  } catch {
+    return [];
+  }
 }
 
 // Último saldo corrente da conta no BT (null se a conta não tem linhas ainda).

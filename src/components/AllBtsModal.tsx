@@ -3,6 +3,7 @@ import { Search, Calendar, Pencil, X } from 'lucide-react';
 import Modal from './ui/Modal';
 import { Input, Select, Button, Badge, EmptyState } from './ui/Field';
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import { useBt } from '@/context/BtContext';
 import { formatDate } from '@/lib/format';
 import type { BtReport, BtStatus } from '@/types';
@@ -23,11 +24,14 @@ export default function AllBtsModal({ open, onClose }: AllBtsModalProps) {
 
   const fetchBts = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('bt_reports')
-      .select('*')
-      .order('data', { ascending: false });
-    if (data) setBts(data as BtReport[]);
+    try {
+      const data = await fetchAll<BtReport>((from, to) =>
+        supabase.from('bt_reports').select('*').order('data', { ascending: false }).order('id', { ascending: false }).range(from, to)
+      );
+      setBts(data);
+    } catch {
+      setBts([]);
+    }
     setLoading(false);
   }, []);
 

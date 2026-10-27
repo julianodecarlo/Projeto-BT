@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import type { BtReport, Account } from '@/types';
 
 export async function listAccounts(): Promise<Account[]> {
@@ -22,8 +23,13 @@ export async function fetchLatestBt(): Promise<BtReport | null> {
 }
 
 export async function listBts(): Promise<BtReport[]> {
-  const { data } = await supabase.from('bt_reports').select('*').order('data', { ascending: false });
-  return (data as BtReport[]) || [];
+  try {
+    return await fetchAll<BtReport>((from, to) =>
+      supabase.from('bt_reports').select('*').order('data', { ascending: false }).order('id', { ascending: false }).range(from, to)
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function listRecentBts(limit: number): Promise<BtReport[]> {

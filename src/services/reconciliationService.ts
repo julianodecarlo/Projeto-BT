@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import type {
   BtReport,
   Cheque,
@@ -20,18 +21,26 @@ export interface PendencyData {
 }
 
 export async function fetchPendencyData(): Promise<PendencyData> {
-  const [cqRes, dpRes, payRes, resRes] = await Promise.all([
-    supabase.from('cheques').select('*').order('data_emissao', { ascending: true }),
-    supabase.from('deposits_pending').select('*').order('created_at', { ascending: true }),
-    supabase.from('payments_pending').select('*').order('created_at', { ascending: true }),
-    supabase.from('pendency_resolutions').select('*'),
-  ]);
-  return {
-    cheques: (cqRes.data || []) as Cheque[],
-    deposits: (dpRes.data || []) as DepositPending[],
-    payments: (payRes.data || []) as PaymentPending[],
-    resolutions: (resRes.data || []) as PendencyResolution[],
-  };
+  try {
+    const [cq, dp, pay, res] = await Promise.all([
+      fetchAll<Cheque>((from, to) =>
+        supabase.from('cheques').select('*').order('data_emissao', { ascending: true }).order('id').range(from, to)),
+      fetchAll<DepositPending>((from, to) =>
+        supabase.from('deposits_pending').select('*').order('created_at', { ascending: true }).order('id').range(from, to)),
+      fetchAll<PaymentPending>((from, to) =>
+        supabase.from('payments_pending').select('*').order('created_at', { ascending: true }).order('id').range(from, to)),
+      fetchAll<PendencyResolution>((from, to) =>
+        supabase.from('pendency_resolutions').select('*').order('id').range(from, to)),
+    ]);
+    return {
+      cheques: cq,
+      deposits: dp,
+      payments: pay,
+      resolutions: res,
+    };
+  } catch {
+    return { cheques: [], deposits: [], payments: [], resolutions: [] };
+  }
 }
 
 export async function listBtMeta(): Promise<Pick<BtReport, 'id' | 'data' | 'status'>[]> {
