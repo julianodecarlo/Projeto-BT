@@ -35,7 +35,7 @@ interface BtContextValue {
   salvarBtRascunho: () => Promise<boolean>;
   validarBtAtual: () => Promise<PendenciaItem[]>;
   fecharBtAtual: () => Promise<PendenciaItem[]>;
-  updateSaldosReaberto: () => Promise<boolean>;
+  updateSaldosReaberto: (btId: string) => Promise<boolean>;
 }
 
 const BtContext = createContext<BtContextValue | null>(null);
@@ -194,30 +194,32 @@ export function BtProvider({ children }: { children: ReactNode }) {
   }, [currentBt, setCurrentBt]);
 
   // Fluxo manual de continuidade em BT reaberto: compara o saldo final do BT
-  // anterior fechado com o saldo inicial armazenado neste BT e, se diferente,
-  // substitui a âncora "Saldo Anterior" de cada conta afetada. O recálculo em
-  // cadeia do BT atual é responsabilidade da esteira Salvar → Validar → Fechar.
-  const updateSaldosReaberto = useCallback(async (): Promise<boolean> => {
-    if (!currentBt) return false;
-    const prev = await getBtAnterior(currentBt);
+  // anterior fechado com o saldo inicial armazenado no BT ALVO (que pode não
+  // ser o atualmente aberto no app) e, se diferente, substitui a âncora "Saldo
+  // Anterior" de cada conta afetada.
+  const updateSaldosReaberto = useCallback(async (btId: string): Promise<boolean> => {
+    const target = await fetchBt(btId);
+    if (!target) return false;
+    const prev = await getBtAnterior(target);
     if (!prev) return false;
     const accs = sortAccounts(await listAccounts());
 
     const aberturaMap = new Map<string, number>();
     for (const acc of accs) {
-      aberturaMap.set(acc.id, await getSaldoAbertura(currentBt, acc));
+      aberturaMap.set(acc.id, await getSaldoAbertura(target, acc));
     }
 
     // Atualiza a transação âncora "Saldo Anterior" de cada conta cujo saldo
     // inicial armazenado difere do saldo final do BT anterior.
-    const { data: anchors } = await supabase
+    const { data: anchors, error: anchorErr } = await supabase
       .from('transactions')
       .select('id, account_id, saldo_anterior')
-      .eq('bt_report_id', currentBt.id)
+      .eq('bt_report_id', target.id)
       .eq('descricao', 'Saldo Anterior');
+    if (anchorErr) return false;
     const rows = (anchors || []) as { id: string; account_id: string; saldo_anterior: number | null }[];
 
-    const updates: Promise<unknown>[] = [];
+    const updates: Promise<Error | null>[] = [];
     for (const row of rows) {
       const novo = aberturaMap.get(row.account_id);
       if (novo === undefined) continue;
@@ -232,14 +234,19 @@ export function BtProvider({ children }: { children: ReactNode }) {
         })()
       );
     }
-    const results = await Promise.all(updates) as (Error | null)[];
+    const results = await Promise.all(updates);
     if (results.some(r => r !== null)) return false;
 
-    // Reprocessa o BT atual para propagar o novo saldo inicial pela cadeia de
+    // Reprocessa o BT alvo para propagar o novo saldo inicial pela cadeia de
     // lançamentos (âncora + entradas − saídas, linha por linha).
-    await forceRecalcBtSaldos(currentBt, accs);
+    await forceRecalcBtSaldos(target, accs);
+
+    // Se o BT alvo é o ativo, força refetch dos dados exibidos.
+    if (currentBt?.id === target.id) {
+      await refreshBt();
+    }
     return true;
-  }, [currentBt]);
+  }, [currentBt, refreshBt]);
 
   const deleteBt = useCallback(async (id: string): Promise<boolean> => {
     const bt = await fetchBt(id);

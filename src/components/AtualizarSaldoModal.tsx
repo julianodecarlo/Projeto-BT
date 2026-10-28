@@ -24,7 +24,7 @@ interface AtualizarSaldoModalProps {
 }
 
 export default function AtualizarSaldoModal({ open, onClose, bt, onAtualizado }: AtualizarSaldoModalProps) {
-  const { accounts } = useBt();
+  const { accounts, updateSaldosReaberto } = useBt();
   const [loading, setLoading] = useState(false);
   const [divergencias, setDivergencias] = useState<Divergencia[] | null>(null);
   const [done, setDone] = useState(false);
@@ -88,7 +88,7 @@ export default function AtualizarSaldoModal({ open, onClose, bt, onAtualizado }:
   const confirmar = async () => {
     setLoading(true);
     setError('');
-    const ok = await updateSaldosReabertoSafe();
+    const ok = await updateSaldosReaberto(bt.id);
     setLoading(false);
     if (ok) {
       setDone(true);
@@ -97,9 +97,6 @@ export default function AtualizarSaldoModal({ open, onClose, bt, onAtualizado }:
       setError('Não foi possível atualizar os saldos. Tente novamente.');
     }
   };
-
-  const { updateSaldosReaberto } = useBt();
-  const updateSaldosReabertoSafe = updateSaldosReaberto;
 
   const close = () => {
     setDivergencias(null);
