@@ -8,6 +8,21 @@ interface AccountLike {
   saldo_inicial: number;
 }
 
+// Saldo final em memória a partir das transações de uma conta, independente de
+// ordem: âncora "Saldo Anterior" + entradas − saídas. Anulações/estornos
+// (deposito_anulacao) SEMPRE creditem a conta, mesmo se gravados como saída.
+export function computeSaldoFinalFromTxs(txs: Transaction[], saldoInicial: number): number {
+  const anchor = txs.find(t => t.descricao === 'Saldo Anterior');
+  let saldo = new Decimal(anchor ? anchor.saldo_anterior || 0 : saldoInicial || 0);
+  for (const t of txs) {
+    if (t.descricao === 'Saldo Anterior') continue;
+    const isEntrada = t.tipo_movimento === 'entrada' || t.tipo === 'deposito_anulacao';
+    const v = new Decimal(t.valor || 0);
+    saldo = isEntrada ? saldo.plus(v) : saldo.minus(v);
+  }
+  return saldo.toNumber();
+}
+
 // Saldo final de uma conta em um BT, calculado de forma independente de ordem:
 // âncora "Saldo Anterior" + somatório de entradas - somatório de saídas.
 // Retorna null se a conta não possui nenhuma linha no BT.
@@ -27,15 +42,7 @@ export async function computeSaldoFinalConta(btId: string, acc: AccountLike): Pr
     return null;
   }
   if (txs.length === 0) return null;
-
-  const anchor = txs.find(t => t.descricao === 'Saldo Anterior');
-  let saldo = new Decimal(anchor ? anchor.saldo_anterior || 0 : acc.saldo_inicial || 0);
-  for (const t of txs) {
-    if (t.descricao === 'Saldo Anterior') continue;
-    const v = new Decimal(t.valor || 0);
-    saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
-  }
-  return saldo.toNumber();
+  return computeSaldoFinalFromTxs(txs, acc.saldo_inicial || 0);
 }
 
 // BT imediatamente anterior a um dado BT (excluindo-o), por data e criação.

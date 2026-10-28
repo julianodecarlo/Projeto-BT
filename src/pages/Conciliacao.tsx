@@ -20,6 +20,7 @@ import {
 import { listTransactions } from '@/services/transactionService';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
+import { computeSaldoFinalFromTxs } from '@/lib/recalc';
 import { getOpenItems } from '@/lib/reconStatus';
 import { sortAccounts } from '@/lib/sortAccounts';
 
@@ -94,20 +95,14 @@ export default function Conciliacao() {
 
   const getAccount = (id: string) => accounts.find(a => a.id === id);
   // Saldo Orçamentário = MESMA fórmula do Saldo Final da aba Movimentações,
-  // independente de ordem das linhas: âncora "Saldo Anterior" + entradas − saídas.
+  // via fonte única compartilhada (lib/recalc): âncora "Saldo Anterior" +
+  // entradas − saídas, com anulações sempre creditando a conta.
   const getAccountSaldoOrcamentario = (accId: string): number => {
     const acc = getAccount(accId);
     if (!acc) return 0;
     const accTxs = transactions.filter(t => t.account_id === accId);
     if (accTxs.length === 0) return acc.saldo_inicial;
-    const anchor = accTxs.find(t => t.descricao === 'Saldo Anterior');
-    let saldo = toDecimal(anchor ? (anchor.saldo_anterior || 0) : acc.saldo_inicial || 0);
-    for (const t of accTxs) {
-      if (t.descricao === 'Saldo Anterior') continue;
-      const v = toDecimal(t.valor || 0);
-      saldo = t.tipo_movimento === 'entrada' ? saldo.plus(v) : saldo.minus(v);
-    }
-    return saldo.toNumber();
+    return computeSaldoFinalFromTxs(accTxs, acc.saldo_inicial);
   };
 
   // FOTO ESTÁTICA POR BT: usa a fonte única (reconStatus) — entram pendências
