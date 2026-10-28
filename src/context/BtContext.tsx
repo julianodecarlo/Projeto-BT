@@ -124,8 +124,12 @@ export function BtProvider({ children }: { children: ReactNode }) {
     const accs = sortAccounts(await listAccounts());
     if (accs.length === 0) return;
     const subsequent = await listBtsFromData(editedBt.data);
-    // Recalcula cada BT da cadeia com abertura = saldo final do BT anterior
+    // Recalcula cada BT da cadeia com abertura = saldo final do BT anterior.
+    // BT fechado é IMUTÁVEL: não é reescrito — mas continua sendo a fonte da
+    // abertura do BT seguinte, garantindo que o saldo inicial de um BT N seja
+    // sempre o saldo final do BT N-1.
     for (const bt of subsequent) {
+      if (bt.status === 'fechado') continue;
       await forceRecalcBtSaldos(bt, accs);
     }
   }, []);

@@ -1,4 +1,5 @@
 import { Calendar, Plus } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { formatDate } from '@/lib/format';
 
 interface TopBarProps {
@@ -7,9 +8,11 @@ interface TopBarProps {
   btNumero: string | null;
   btData: string | null;
   onNewBt: () => void;
+  /** Ação contextual da tela atual (ex.: botão fixo "Salvar Lançamentos") */
+  actions?: ReactNode;
 }
 
-export default function TopBar({ title, subtitle, btNumero, btData, onNewBt }: TopBarProps) {
+export default function TopBar({ title, subtitle, btNumero, btData, onNewBt, actions }: TopBarProps) {
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
       <div>
@@ -25,6 +28,7 @@ export default function TopBar({ title, subtitle, btNumero, btData, onNewBt }: T
             <span>{formatDate(btData)}</span>
           </div>
         )}
+        {actions}
         <button
           onClick={onNewBt}
           className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3.5 py-2 rounded-lg transition-colors shadow-sm"

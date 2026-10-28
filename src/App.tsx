@@ -2,7 +2,10 @@ import { lazy, Suspense, useState } from 'react';
 import Sidebar, { type PageKey } from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import NewBtModal from '@/components/NewBtModal';
+import StickySaveButton from '@/components/ui/StickySaveButton';
 import { BtProvider, useBt } from '@/context/BtContext';
+import { subscribeUnsavedGuard } from '@/lib/unsavedGuard';
+import { useEffect } from 'react';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Movimentacao = lazy(() => import('@/pages/Movimentacao'));
@@ -16,13 +19,13 @@ const PageFallback = () => (
   <div className="flex items-center justify-center h-full min-h-[200px] text-sm text-slate-400">Carregando...</div>
 );
 
-const pageTitles: Record<PageKey, { title: string; subtitle: string }> = {
+const pageTitles: Record<PageKey, { title: string; subtitle: string; saveLabel?: string }> = {
   dashboard: { title: 'Visão Geral', subtitle: 'Painel de controle do BT - Boletim de Tesouraria e Caixa' },
-  receita: { title: 'Controle da Receita', subtitle: 'Subalíneas e Receitas Próprias (contábil e financeira)' },
-  movimentacao: { title: 'Movimentações', subtitle: 'Registro de pagamentos e recebimentos por conta' },
+  receita: { title: 'Controle da Receita', subtitle: 'Subalíneas e Receitas Próprias (contábil e financeira)', saveLabel: 'Salvar Lançamentos' },
+  movimentacao: { title: 'Movimentações', subtitle: 'Registro de pagamentos e recebimentos por conta', saveLabel: 'Salvar Lançamentos' },
   convenios: { title: 'Controle de Convênios', subtitle: 'Fontes orçamentárias 5/45/4/44 e vínculo financeiro' },
   conciliacao: { title: 'Conciliação Bancária', subtitle: 'Confronto entre saldo orçamentário e extrato bancário' },
-  fechamento: { title: 'Fechamento Diário', subtitle: 'Validação e encerramento do BT' },
+  fechamento: { title: 'Fechamento Diário', subtitle: 'Validação e encerramento do BT', saveLabel: 'Salvar Assinaturas' },
   relatorios: { title: 'Relatórios e PDF', subtitle: 'Visualização e exportação de BTs - Boletim de Tesouraria e Caixa' },
 };
 
@@ -30,6 +33,15 @@ function AppContent() {
   const { currentBt } = useBt();
   const [page, setPage] = useState<PageKey>('dashboard');
   const [showNewBt, setShowNewBt] = useState(false);
+  const [anyUnsaved, setAnyUnsaved] = useState(false);
+
+  // Espelha a barreira global de alterações não salvas: quando qualquer tela
+  // registra pendência, o botão fixo do cabeçalho fica laranja.
+  useEffect(() =>
+    subscribeUnsavedGuard(() => {
+      import('@/lib/unsavedGuard').then(({ hasUnsavedGuard }) => setAnyUnsaved(hasUnsavedGuard()));
+    }),
+  []);
 
   const meta = pageTitles[page];
 
@@ -46,6 +58,19 @@ function AppContent() {
           btNumero={currentBt?.numero ?? null}
           btData={currentBt?.data ?? null}
           onNewBt={() => setShowNewBt(true)}
+          actions={
+            meta.saveLabel ? (
+              <StickySaveButton
+                dirty={anyUnsaved}
+                disabled={currentBt?.status === 'fechado' || !anyUnsaved}
+                label={meta.saveLabel}
+                onSave={async () => {
+                  const { runUnsavedSavers } = await import('@/lib/unsavedGuard');
+                  await runUnsavedSavers();
+                }}
+              />
+            ) : undefined
+          }
         />
         <main className="flex-1 overflow-y-auto relative">
           <Suspense fallback={<PageFallback />}>

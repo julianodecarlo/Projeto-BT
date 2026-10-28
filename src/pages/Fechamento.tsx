@@ -7,6 +7,7 @@ import { formatCurrency, toDecimal, toNumber, sumDecimal, formatDate } from '@/l
 import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from '@/lib/reconStatus';
 import type { Transaction, RevenueOwn, Cheque, DepositPending, BtReport, PaymentPending, PendencyResolution } from '@/types';
 import { listTransactions } from '@/services/transactionService';
+import { setUnsavedGuard, setUnsavedSaver } from '@/lib/unsavedGuard';
 import { listRevenues } from '@/services/revenueService';
 import { fetchPendencyData, listBtMeta } from '@/services/reconciliationService';
 import { fetchBtBefore, updateBtSignatures, setBtStatus } from '@/services/btService';
@@ -335,6 +336,24 @@ export default function Fechamento({ onNavigate }: { onNavigate?: (page: PageKey
     setPendingSigAction(() => action);
     setShowSigAlert(true);
   };
+
+  // Assinaturas entram na barreira global: o botão fixo do cabeçalho fica
+  // laranja enquanto houver alteração não salva e aciona este salvamento.
+  const saveSignaturesRef = useRef(handleSaveSignatures);
+  saveSignaturesRef.current = handleSaveSignatures;
+  useEffect(() => {
+    if (isFechado) {
+      setUnsavedGuard('fechamento', false);
+      return;
+    }
+    setUnsavedGuard('fechamento', signaturesDirty);
+  }, [signaturesDirty, isFechado]);
+  useEffect(() => {
+    return setUnsavedSaver('fechamento', async () => {
+      await saveSignaturesRef.current();
+      return true;
+    });
+  }, []);
 
   const handleClose = async () => {
     if (!currentBt || !allPassed) return;
