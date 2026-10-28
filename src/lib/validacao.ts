@@ -1,5 +1,6 @@
 import { formatCurrency, toDecimal } from './format';
 import { getOpenItems, pendenciasPorConta, calcularStatusConciliacao } from './reconStatus';
+import { verificarContinuidadeSaldos } from './integridade';
 import type { ValidacaoData } from './btData';
 
 export interface PendenciaItem {
@@ -13,7 +14,7 @@ export interface PendenciaItem {
 // de pendências impeditivas; lista vazia significa BT pronto para fechamento.
 // Divergências em contas de convênio não impedem o fechamento (conciliação periódica).
 export function validarBtCentral(data: ValidacaoData): PendenciaItem[] {
-  const { bt, accounts, transactions, revenues, cheques, deposits, payments, resolutions, allBts, reconciliations } = data;
+  const { bt, accounts, transactions, revenues, cheques, deposits, payments, resolutions, allBts, reconciliations, prevTransactions } = data;
 
   const pendencias: PendenciaItem[] = [];
 
@@ -46,6 +47,17 @@ export function validarBtCentral(data: ValidacaoData): PendenciaItem[] {
   const statusPorConta = calcularStatusConciliacao({ accounts, transactions, reconciliations, pendMap });
 
   const accountsWithTx = new Set(transactions.map(t => t.account_id));
+
+  // Continuidade entre BTs: a abertura gravada de cada conta com movimento
+  // deve ser exatamente o saldo final do BT anterior. Divergência é pendência
+  // impeditiva (bloqueia Validar e Fechar).
+  for (const d of verificarContinuidadeSaldos(accounts, transactions, prevTransactions)) {
+    pendencias.push({
+      location: `Saldos entre BTs - Conta ${d.conta}`,
+      message: `Saldo anterior (${formatCurrency(d.abertura)}) difere do saldo final do BT anterior (${formatCurrency(d.esperado)}).`,
+    });
+  }
+
   for (const x of statusPorConta) {
     if (x.isConvenio) continue;
 

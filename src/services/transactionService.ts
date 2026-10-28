@@ -49,6 +49,19 @@ export async function fetchLastSaldoFinal(btId: string, accId: string): Promise<
   return data ? (data as { saldo_final: number }).saldo_final : null;
 }
 
+// Próxima ordem única crescente para a conta no BT (max + 1); 1 se não há linhas.
+export async function fetchNextOrdem(btId: string, accId: string): Promise<number> {
+  const { data } = await supabase
+    .from('transactions')
+    .select('ordem')
+    .eq('bt_report_id', btId)
+    .eq('account_id', accId)
+    .order('ordem', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? ((data as { ordem: number }).ordem ?? 0) + 1 : 1;
+}
+
 export async function fetchAccountSaldoInicial(accId: string): Promise<number> {
   const { data } = await supabase
     .from('accounts')
@@ -79,6 +92,8 @@ export interface NewEntry {
   // saldos vêm prontos; por padrão são derivados do saldo corrente da conta.
   saldoAnterior?: number | null;
   saldoFinal?: number | null;
+  // Preserva uma ordem calculada pelo chamador (ex.: par de transferência).
+  ordemFornecida?: boolean;
 }
 
 // Insere um lançamento aplicando SALDO FINAL = SALDO ANTERIOR ± VALOR.
@@ -107,7 +122,12 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
     if (e.tipo) payload.tipo = e.tipo;
     if (e.tipoOrcamento) payload.tipo_orcamento = e.tipoOrcamento;
     if (e.fonteOrcamentaria) payload.fonte_orcamentaria = e.fonteOrcamentaria;
-    if (e.ordem != null) payload.ordem = e.ordem;
+    // ordem única crescente por conta no BT: se o chamador não forneceu, deriva max+1
+    if (e.ordem != null && e.ordemFornecida) {
+      payload.ordem = e.ordem;
+    } else {
+      payload.ordem = await fetchNextOrdem(e.btReportId, e.accountId);
+    }
     const { error } = await supabase.from('transactions').insert(payload);
     if (error) console.error('Erro ao salvar movimentação:', error.message || error);
     return !error;

@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { fetchAll } from './fetchAll';
 import { getOpenItems } from './reconStatus';
+import { getBtAnterior } from './recalc';
 import { sortAccounts } from './sortAccounts';
 import type {
   BtReport,
@@ -30,6 +31,7 @@ export interface PdfData {
 export interface ValidacaoData extends PdfData {
   resolutions: PendencyResolution[];
   allBts: Pick<BtReport, 'id' | 'data'>[];
+  prevTransactions: Transaction[];
 }
 
 // Camada única de consulta: busca e consolida tudo que as funções puras
@@ -115,6 +117,20 @@ export async function fetchValidacaoData(
     return null;
   }
   const [txRes, revRes, cqRes, dpRes, payRes, resRes, btsRes] = all2;
+
+  // Transações do BT anterior em UMA consulta (sem filtro novo nas demais
+  // tabelas): base para a checagem de continuidade de saldos entre BTs.
+  const prev = await getBtAnterior(bt as BtReport);
+  let prevTransactions: Transaction[] = [];
+  if (prev) {
+    try {
+      prevTransactions = await fetchAll<Transaction>((from, to) =>
+        supabase.from('transactions').select('*').eq('bt_report_id', prev.id).range(from, to));
+    } catch {
+      prevTransactions = [];
+    }
+  }
+
   return {
     bt: bt as BtReport,
     accounts,
@@ -125,6 +141,7 @@ export async function fetchValidacaoData(
     payments: payRes,
     resolutions: resRes,
     allBts: btsRes,
+    prevTransactions,
     reconciliations,
   };
 }

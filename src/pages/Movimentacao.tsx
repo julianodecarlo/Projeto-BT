@@ -258,8 +258,6 @@ export default function Movimentacao() {
   const handleSave = async () => {
     if (!currentBt) return;
     const existingBudget = transactions.filter(t => t.tipo_orcamento != null);
-    const maxOrdem = transactions.length > 0 ? Math.max(...transactions.map(t => t.ordem ?? 0)) : 0;
-    let ordem = maxOrdem + 1;
     const saldoAnteriorMap: Record<string, number> = {};
     for (const acc of accounts) {
       saldoAnteriorMap[acc.id] = getAccountSaldoAnterior(acc.id);
@@ -311,7 +309,6 @@ export default function Movimentacao() {
             saldoFinal: saldoFin,
             dataLancamento: currentBt.data,
             tipoOrcamento: entry.tipo,
-            ordem: ordem++,
           });
           touched.add(acc.id);
           saldoAnteriorMap[acc.id] = saldoFin;
