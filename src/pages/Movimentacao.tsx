@@ -266,6 +266,9 @@ export default function Movimentacao() {
     }
 
     const activeAccs = accounts.filter(a => a.ativo);
+    // Contas realmente tocadas por este salvamento: apenas elas terão a cadeia
+    // de saldos refeita — salvamento local é leve e não varre o banco inteiro.
+    const touched = new Set<string>();
     const entries: { field: keyof RowInput; tipo: BudgetType; desc: string }[] = [
       { field: 'vigente', tipo: 'vigente', desc: 'Orçamento Vigente' },
       { field: 'restos_pagar', tipo: 'restos_pagar', desc: 'Restos a Pagar' },
@@ -284,6 +287,7 @@ export default function Movimentacao() {
           // Campo esvaziado: remove a linha antiga (se existir)
           if (existing) {
             await deleteTransaction(existing.id);
+            touched.add(acc.id);
           }
           continue;
         }
@@ -291,6 +295,7 @@ export default function Movimentacao() {
         if (existing) {
           if (existing.valor !== v) {
             await updateTransaction(existing.id, { valor: v });
+            touched.add(acc.id);
           }
           saldoAnteriorMap[acc.id] = existing.saldo_final;
         } else {
@@ -308,14 +313,17 @@ export default function Movimentacao() {
             tipoOrcamento: entry.tipo,
             ordem: ordem++,
           });
+          touched.add(acc.id);
           saldoAnteriorMap[acc.id] = saldoFin;
         }
       }
     }
 
-    // Recarrega do banco: os valores permanecem na tela como histórico e continuam editáveis
-    for (const acc of accounts) {
-      await recalcAccountSaldos(acc.id);
+    // Recalcula SOMENTE as contas cujos valores mudaram; as demais mantêm a
+    // cadeia já gravada. O recálculo completo em cadeia acontece no Validar/
+    // Fechar BT (e no Salvar BT do menu lateral).
+    for (const accId of touched) {
+      await recalcAccountSaldos(accId);
     }
     await fetchTransactions();
     setUnsavedGuard('movimentacao', false);
@@ -552,10 +560,11 @@ export default function Movimentacao() {
   // Recálculo IDEMPOTENTE das fontes dos convênios vinculados às contas tocadas:
   // Saldo Fonte = Saldo Anterior (snapshot do BT) + depósitos − anulações,
   // filtrando SEMPRE por conta do convênio E fonte_orcamentaria exata.
+  // Recarrega a lista de convênios APENAS quando alguma fonte mudou.
   const recalcFontesConvenio = async (contasTocadas: string[]) => {
     if (!currentBt) return;
-    await recalcConveniosPorContas(currentBt.id, convenios, contasTocadas);
-    setConvenios(await listConvenios());
+    const afetados = await recalcConveniosPorContas(currentBt.id, convenios, contasTocadas);
+    if (afetados > 0) setConvenios(await listConvenios());
   };
 
   const startEditDeposito = (tx: Transaction) => {

@@ -88,28 +88,32 @@ export async function recalcConvenioFontes(
 }
 
 // Recalcula todos os convênios vinculados às contas tocadas pelos lançamentos.
-// Persiste no banco; o chamador recarrega a lista de convênios depois.
+// Persiste no banco e RETORNA quantos convênios foram efetivamente recalculados,
+// para o chamador decidir se precisa recarregar a lista.
 export async function recalcConveniosPorContas(
   btId: string,
   convenios: Convenio[],
   contasTocadas: Iterable<string>
-): Promise<void> {
+): Promise<number> {
   const tocadas = new Set(contasTocadas);
-  if (tocadas.size === 0) return;
+  if (tocadas.size === 0) return 0;
 
   const afetados = convenios.filter(c => c.finance_account_id && tocadas.has(c.finance_account_id));
-  if (afetados.length === 0) return;
+  if (afetados.length === 0) return 0;
 
   const { data } = await supabase
     .from('transactions')
-    .select('*')
+    .select('account_id, valor, fonte_orcamentaria')
     .eq('bt_report_id', btId)
     .eq('tipo', 'deposito_anulacao');
   const lancamentos = (data as Transaction[]) || [];
 
+  let count = 0;
   for (const conv of afetados) {
-    await recalcConvenioFontes(btId, conv, lancamentos);
+    const ok = await recalcConvenioFontes(btId, conv, lancamentos);
+    if (ok) count++;
   }
+  return count;
 }
 
 export { FONTES };
