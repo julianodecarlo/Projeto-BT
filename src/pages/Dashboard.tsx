@@ -14,6 +14,7 @@ import { BtFechadoGuard, BtFechadoBanner } from '@/components/BtFechadoGuard';
 import { listRecentBts } from '@/services/btService';
 import { listTransactions } from '@/services/transactionService';
 import { sortAccounts } from '@/lib/sortAccounts';
+import { sortTxRows } from '@/lib/txOrder';
 
 interface DashboardProps {
   onNavigate: (page: PageKey) => void;
@@ -61,7 +62,7 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
   // Saldo corrente de cada conta = saldo_final da última transação no BT atual (abertura "Saldo Anterior" como fallback)
   const saldoCorrentePorConta = new Map<string, number>(
     accounts.map(acc => {
-      const txsAcc = transactions.filter(t => t.account_id === acc.id);
+      const txsAcc = sortTxRows(transactions.filter(t => t.account_id === acc.id));
       if (txsAcc.length > 0) return [acc.id, txsAcc[txsAcc.length - 1].saldo_final];
       return [acc.id, acc.saldo_inicial];
     })

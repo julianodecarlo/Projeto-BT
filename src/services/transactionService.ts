@@ -1,19 +1,19 @@
 import { supabase } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetchAll';
+import { sortTxRows } from '@/lib/txOrder';
 import { toDecimal } from '@/lib/format';
 import type { Transaction, FonteOrcamentaria } from '@/types';
 
 export async function listTransactions(btId: string): Promise<Transaction[]> {
   try {
-    return await fetchAll<Transaction>((from, to) =>
+    const rows = await fetchAll<Transaction>((from, to) =>
       supabase
         .from('transactions')
         .select('*')
         .eq('bt_report_id', btId)
-        .order('ordem', { ascending: true })
-        .order('id')
         .range(from, to)
     );
+    return sortTxRows(rows);
   } catch {
     return [];
   }
@@ -21,16 +21,15 @@ export async function listTransactions(btId: string): Promise<Transaction[]> {
 
 export async function listAccountTransactions(btId: string, accId: string): Promise<Transaction[]> {
   try {
-    return await fetchAll<Transaction>((from, to) =>
+    const rows = await fetchAll<Transaction>((from, to) =>
       supabase
         .from('transactions')
         .select('*')
         .eq('bt_report_id', btId)
         .eq('account_id', accId)
-        .order('ordem', { ascending: true })
-        .order('id')
         .range(from, to)
     );
+    return sortTxRows(rows);
   } catch {
     return [];
   }
@@ -38,15 +37,17 @@ export async function listAccountTransactions(btId: string, accId: string): Prom
 
 // Último saldo corrente da conta no BT (null se a conta não tem linhas ainda).
 export async function fetchLastSaldoFinal(btId: string, accId: string): Promise<number | null> {
-  const { data } = await supabase
-    .from('transactions')
-    .select('saldo_final')
-    .eq('bt_report_id', btId)
-    .eq('account_id', accId)
-    .order('ordem', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data ? (data as { saldo_final: number }).saldo_final : null;
+  const rows = await fetchAll<Pick<Transaction, 'saldo_final'>>((from, to) =>
+    supabase
+      .from('transactions')
+      .select('saldo_final')
+      .eq('bt_report_id', btId)
+      .eq('account_id', accId)
+      .range(from, to)
+  );
+  if (rows.length === 0) return null;
+  const sorted = sortTxRows(rows as Transaction[]);
+  return (sorted[sorted.length - 1] as { saldo_final: number }).saldo_final;
 }
 
 // Próxima ordem única crescente para a conta no BT (max + 1); 1 se não há linhas.

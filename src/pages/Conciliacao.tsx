@@ -20,7 +20,7 @@ import {
 import { listTransactions } from '@/services/transactionService';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal } from '@/lib/format';
 import type { Cheque, DepositPending, Reconciliation, Transaction, Account, Convenio, PaymentPending, PendencyResolution, BtReport } from '@/types';
-import { computeSaldoFinalFromTxs } from '@/lib/recalc';
+import { sortTxRows } from '@/lib/txOrder';
 import { getOpenItems } from '@/lib/reconStatus';
 import { sortAccounts } from '@/lib/sortAccounts';
 
@@ -101,8 +101,14 @@ export default function Conciliacao() {
     const acc = getAccount(accId);
     if (!acc) return 0;
     const accTxs = transactions.filter(t => t.account_id === accId);
-    if (accTxs.length === 0) return acc.saldo_inicial;
-    return computeSaldoFinalFromTxs(accTxs, acc.saldo_inicial);
+    // Última linha da conta = saldo orçamentário corrente, pelo comparador
+    // único de ordem (âncora primeiro; depois ordem, created_at, id).
+    let saldoOrc = acc.saldo_inicial;
+    if (accTxs.length > 0) {
+      const sorted = sortTxRows(accTxs);
+      saldoOrc = sorted[sorted.length - 1].saldo_final;
+    }
+    return saldoOrc;
   };
 
   // FOTO ESTÁTICA POR BT: usa a fonte única (reconStatus) — entram pendências

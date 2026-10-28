@@ -2,6 +2,7 @@ import Decimal from 'decimal.js';
 import { fetchPdfData } from './btData';
 import { formatCurrency, formatDate, toNumber, sumDecimal, rotuloTipoLancamento, toDecimal } from './format';
 import { calcularStatusConciliacao, pendenciasPorConta } from './reconStatus';
+import { sortTxRows } from './txOrder';
 import { sortAccounts } from './sortAccounts';
 import type {
   BtReport,
@@ -433,7 +434,7 @@ export function generatePdfHtml(data: PdfData): string {
       </thead>
       <tbody>
         ${activeAccounts.map(acc => {
-          const accTxs = transactions.filter(t => t.account_id === acc.id);
+          const accTxs = sortTxRows(transactions.filter(t => t.account_id === acc.id));
           const saldoAnt = accTxs.length > 0 ? accTxs[0].saldo_anterior : acc.saldo_inicial;
           const saldoFin = accTxs.length > 0 ? accTxs[accTxs.length - 1].saldo_final : acc.saldo_inicial;
           const debitos = toNumber(sumDecimal(accTxs.filter(t => t.tipo_movimento === 'saida').map(t => t.valor)));

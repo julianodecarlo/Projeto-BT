@@ -1,4 +1,5 @@
 import type { BtReport, Account, Transaction, Cheque, DepositPending, PaymentPending, PendencyResolution, Reconciliation } from '@/types';
+import { sortTxRows } from './txOrder';
 
 // Fonte única de verdade do status de conciliação.
 // Conciliação Bancária e Fechamento Diário avaliam com esta MESMA fórmula ao vivo
@@ -120,7 +121,8 @@ export function calcularStatusConciliacao(params: {
     // dobro e cria divergência fantasma (ex.: R$ 595,00 no lugar de R$ 70,00).
     let saldoOrc = acc.saldo_inicial;
     if (accTxs.length > 0) {
-      saldoOrc = accTxs[accTxs.length - 1].saldo_final;
+      const sorted = sortTxRows(accTxs);
+      saldoOrc = sorted[sorted.length - 1].saldo_final;
     }
     const pend = pendMap.get(acc.id) ?? 0;
     const st = getReconStatus(recon, pend, saldoOrc);
