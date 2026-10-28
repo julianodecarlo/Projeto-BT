@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetchAll';
+import { sortTxRows } from '@/lib/txOrder';
 import Decimal from 'decimal.js';
 import type { Transaction } from '@/types';
 
@@ -88,8 +89,6 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
         .from('transactions')
         .select('*')
         .eq('bt_report_id', bt.id)
-        .order('ordem', { ascending: true })
-        .order('id')
         .range(from, to)
     );
   } catch {
@@ -104,7 +103,6 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
           .from('transactions')
           .select('*')
           .eq('bt_report_id', prev.id)
-          .order('id')
           .range(from, to)
       );
     } catch {
@@ -133,34 +131,24 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
     if (!txs) continue;
 
     // Abertura = saldo final do BT anterior (mesma regra de getSaldoAbertura,
-    // calculada em memória a partir das transações já buscadas); sem BT anterior
-    // ou sem linhas no BT anterior, cai no saldo_inicial do cadastro.
+    // via computeSaldoFinalFromTxs em memória); sem BT anterior ou sem linhas
+    // no BT anterior, cai no saldo_inicial do cadastro.
     let abertura = acc.saldo_inicial || 0;
     const prevTxs = prev ? prevByAcc.get(acc.id) : undefined;
     if (prev && prevTxs && prevTxs.length > 0) {
-      const anchor = prevTxs.find(t => t.descricao === 'Saldo Anterior');
-      let saldoPrev = new Decimal(anchor ? anchor.saldo_anterior || 0 : acc.saldo_inicial || 0);
-      for (const t of prevTxs) {
-        if (t.descricao === 'Saldo Anterior') continue;
-        const v = new Decimal(t.valor || 0);
-        saldoPrev = t.tipo_movimento === 'entrada' ? saldoPrev.plus(v) : saldoPrev.minus(v);
-      }
-      abertura = saldoPrev.toNumber();
+      abertura = computeSaldoFinalFromTxs(prevTxs, acc.saldo_inicial || 0);
     }
 
+    // Âncora FORA do laço: saldo_anterior = saldo_final = abertura, sempre.
+    // O saldo corrente percorre SÓ as demais linhas, em ordem determinística.
+    const movimentos = sortTxRows(txs.filter(t => t.descricao !== 'Saldo Anterior'));
+
     let saldo = new Decimal(abertura);
-    for (const raw of txs) {
+    for (const raw of movimentos) {
       // Normaliza anulações antigas gravadas como saída: anulação é estorno e SEMPRE credita
       if (raw.tipo === 'deposito_anulacao' && raw.tipo_movimento === 'saida') {
         normalizeIds.push(raw.id);
         raw.tipo_movimento = 'entrada';
-      }
-
-      if (raw.descricao === 'Saldo Anterior') {
-        if (raw.saldo_anterior !== saldo.toNumber() || raw.saldo_final !== saldo.toNumber()) {
-          saldoUpdates.push({ id: raw.id, saldo_anterior: saldo.toNumber(), saldo_final: saldo.toNumber() });
-        }
-        continue;
       }
 
       const valor = new Decimal(raw.valor || 0);
@@ -172,6 +160,11 @@ export async function forceRecalcBtSaldos(bt: { id: string; data: string }, acco
         saldoUpdates.push({ id: raw.id, saldo_anterior: saldo.toNumber(), saldo_final: fin.toNumber() });
       }
       saldo = fin;
+    }
+
+    const anchor = txs.find(t => t.descricao === 'Saldo Anterior');
+    if (anchor && (anchor.saldo_anterior !== abertura || anchor.saldo_final !== abertura)) {
+      saldoUpdates.push({ id: anchor.id, saldo_anterior: abertura, saldo_final: abertura });
     }
   }
 
