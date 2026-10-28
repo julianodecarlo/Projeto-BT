@@ -102,8 +102,8 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
             </p>
           </div>
           {currentBt && (
-            <Badge color={currentBt.status === 'fechado' ? 'green' : currentBt.status === 'validado' ? 'amber' : 'slate'}>
-              {currentBt.status === 'fechado' ? 'Fechado' : currentBt.status === 'validado' ? 'Validado' : 'Rascunho'}
+            <Badge color={currentBt.status === 'fechado' ? 'green' : currentBt.status === 'reaberto' ? 'red' : currentBt.status === 'validado' ? 'amber' : 'slate'}>
+              {currentBt.status === 'fechado' ? 'Fechado' : currentBt.status === 'reaberto' ? 'Reaberto' : currentBt.status === 'validado' ? 'Validado' : 'Rascunho'}
             </Badge>
           )}
         </div>
@@ -195,8 +195,8 @@ export default function Dashboard({ onNavigate, onNewBt }: DashboardProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'validado' ? 'amber' : 'slate'}>
-                      {bt.status === 'fechado' ? 'Fechado' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
+                    <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'reaberto' ? 'red' : bt.status === 'validado' ? 'amber' : 'slate'}>
+                      {bt.status === 'fechado' ? 'Fechado' : bt.status === 'reaberto' ? 'Reaberto' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
                     </Badge>
                     <button
                       onClick={() => handleOpenBt(bt)}

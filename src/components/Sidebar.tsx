@@ -32,8 +32,8 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
 
   const btStatus = currentBt?.status ?? null;
   const btNumero = currentBt?.numero ?? null;
-  const statusColor = btStatus === 'fechado' ? 'bg-emerald-500' : btStatus === 'validado' ? 'bg-amber-500' : 'bg-slate-400';
-  const statusLabel = btStatus === 'fechado' ? 'Fechado' : btStatus === 'validado' ? 'Validado' : 'Rascunho';
+  const statusColor = btStatus === 'fechado' ? 'bg-emerald-500' : btStatus === 'reaberto' ? 'bg-orange-500' : btStatus === 'validado' ? 'bg-amber-500' : 'bg-slate-400';
+  const statusLabel = btStatus === 'fechado' ? 'Fechado' : btStatus === 'reaberto' ? 'Reaberto' : btStatus === 'validado' ? 'Validado' : 'Rascunho';
 
   const showFeedback = (msg: string, type: 'success' | 'error' = 'success') => {
     setFeedback(msg);

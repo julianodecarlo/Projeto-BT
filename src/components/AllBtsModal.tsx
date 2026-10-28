@@ -51,8 +51,8 @@ export default function AllBtsModal({ open, onClose }: AllBtsModalProps) {
   };
 
   const statusBadge = (bt: BtReport) => (
-    <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'validado' ? 'amber' : 'slate'}>
-      {bt.status === 'fechado' ? 'Fechado' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
+    <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'reaberto' ? 'red' : bt.status === 'validado' ? 'amber' : 'slate'}>
+      {bt.status === 'fechado' ? 'Fechado' : bt.status === 'reaberto' ? 'Reaberto' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
     </Badge>
   );
 
@@ -74,6 +74,7 @@ export default function AllBtsModal({ open, onClose }: AllBtsModalProps) {
             <option value="todos">Todos os status</option>
             <option value="rascunho">Rascunho</option>
             <option value="validado">Validado</option>
+            <option value="reaberto">Reaberto</option>
             <option value="fechado">Fechado</option>
           </Select>
         </div>

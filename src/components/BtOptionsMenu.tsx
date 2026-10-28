@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Pencil, RotateCcw, Trash2, AlertTriangle } from 'lucide-react';
+import { MoreVertical, Pencil, RotateCcw, Trash2, AlertTriangle, RefreshCw } from 'lucide-react';
 import Modal from './ui/Modal';
+import AtualizarSaldoModal from './AtualizarSaldoModal';
 import { Field, Input, Button } from './ui/Field';
 import { useBt } from '@/context/BtContext';
 import type { BtReport } from '@/types';
@@ -18,6 +19,7 @@ export default function BtOptionsMenu({ bt, onChanged }: BtOptionsMenuProps) {
   const [showEdit, setShowEdit] = useState(false);
   const [showReopen, setShowReopen] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showAtualizarSaldo, setShowAtualizarSaldo] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -82,6 +84,7 @@ export default function BtOptionsMenu({ bt, onChanged }: BtOptionsMenuProps) {
   };
 
   const isFechado = bt.status === 'fechado';
+  const isReaberto = bt.status === 'reaberto';
 
   return (
     <div className="relative" ref={ref}>
@@ -101,6 +104,14 @@ export default function BtOptionsMenu({ bt, onChanged }: BtOptionsMenuProps) {
           >
             <Pencil className="w-4 h-4 text-slate-400" /> Editar
           </button>
+          {isReaberto && (
+            <button
+              onClick={() => { setShowAtualizarSaldo(true); setOpen(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <RefreshCw className="w-4 h-4 text-blue-500" /> Atualizar Saldo
+            </button>
+          )}
           {isFechado && (
             <button
               onClick={() => { setShowReopen(true); setOpen(false); }}
@@ -143,6 +154,14 @@ export default function BtOptionsMenu({ bt, onChanged }: BtOptionsMenuProps) {
           </div>
         </div>
       </Modal>
+
+      {/* Atualizar Saldo modal (BT reaberto) */}
+      <AtualizarSaldoModal
+        open={showAtualizarSaldo}
+        onClose={() => setShowAtualizarSaldo(false)}
+        bt={bt}
+        onAtualizado={() => onChanged?.()}
+      />
 
       {/* Reopen modal */}
       <Modal open={showReopen} onClose={() => setShowReopen(false)} title="Reabrir BT para Ajustes" maxWidth="max-w-md">

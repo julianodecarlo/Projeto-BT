@@ -83,8 +83,8 @@ export default function Relatorios({ onNavigate }: RelatoriosProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'validado' ? 'amber' : 'slate'}>
-                    {bt.status === 'fechado' ? 'Fechado' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
+                  <Badge color={bt.status === 'fechado' ? 'green' : bt.status === 'reaberto' ? 'red' : bt.status === 'validado' ? 'amber' : 'slate'}>
+                    {bt.status === 'fechado' ? 'Fechado' : bt.status === 'reaberto' ? 'Reaberto' : bt.status === 'validado' ? 'Validado' : 'Rascunho'}
                   </Badge>
                   <Button size="sm" variant="ghost" onClick={() => handleEdit(bt)} title="Abrir e editar">
                     <Pencil className="w-3.5 h-3.5" />

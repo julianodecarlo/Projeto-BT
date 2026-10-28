@@ -200,8 +200,8 @@ export function generatePdfHtml(data: PdfData): string {
       </tr>
     `).join('');
 
-  const statusLabel = bt.status === 'fechado' ? 'FECHADO' : bt.status === 'validado' ? 'VALIDADO' : 'RASCUNHO';
-  const statusColor = bt.status === 'fechado' ? '#059669' : bt.status === 'validado' ? '#d97706' : '#94a3b8';
+  const statusLabel = bt.status === 'fechado' ? 'FECHADO' : bt.status === 'reaberto' ? 'REABERTO' : bt.status === 'validado' ? 'VALIDADO' : 'RASCUNHO';
+  const statusColor = bt.status === 'fechado' ? '#059669' : bt.status === 'reaberto' ? '#ea580c' : bt.status === 'validado' ? '#d97706' : '#94a3b8';
 
   // Resumo por Subalínea: consolidação das subalíneas do Controle da Receita
   // (contábil + financeira), exibida após as tabelas de Receitas Próprias.

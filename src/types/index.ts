@@ -1,4 +1,4 @@
-export type BtStatus = 'rascunho' | 'validado' | 'fechado';
+export type BtStatus = 'rascunho' | 'validado' | 'fechado' | 'reaberto';
 
 
 export type AccountCategory =
