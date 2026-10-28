@@ -504,6 +504,7 @@ export default function Movimentacao() {
         descricao,
         data_lancamento: depData || currentBt.data,
         fonte_orcamentaria: isContaConvenio ? (depFonte || null) : null,
+        natureza: depKind,
       });
       if (ok) {
         await recalcAccountSaldos(depAccountId);
@@ -534,6 +535,7 @@ export default function Movimentacao() {
       dataLancamento: depData || currentBt.data,
       tipo: 'deposito_anulacao',
       fonteOrcamentaria: isContaConvenio ? (depFonte || null) : null,
+      natureza: depKind,
     });
     if (ok) {
       await recalcAccountSaldos(depAccountId);
@@ -567,7 +569,8 @@ export default function Movimentacao() {
   const startEditDeposito = (tx: Transaction) => {
     setEditingDep(tx.id);
     setDepAccountId(tx.account_id);
-    setDepKind('deposito');
+    // natureza gravada; fallback no texto antigo quando a coluna é nula
+    setDepKind(tx.natureza ?? (tx.descricao.toLowerCase().includes('anula') ? 'anulacao' : 'deposito'));
     setDepValor(tx.valor);
     setDepData(tx.data_lancamento || todayISO());
     setDepDescricao(tx.descricao);
@@ -955,7 +958,7 @@ export default function Movimentacao() {
             <h3 className="text-sm font-bold text-slate-800">Depósitos / Anulações</h3>
           </div>
           <p className="text-xs text-slate-500 mb-4">
-            Depósito credita a conta escolhida; anulação debita. Em contas de convênio, selecione também a Fonte Orçamentária (5/45/4/44) — o valor reflete no Controle de Convênios.
+            Depósito e anulação creditam a conta escolhida (anulação é estorno de despesa). Em contas de convênio, selecione também a Fonte Orçamentária (5/45/4/44) — o valor reflete no Controle de Convênios.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Conta">
@@ -1039,13 +1042,31 @@ export default function Movimentacao() {
                     >
                       <td className="px-3 py-2 text-slate-700">{accounts.find(a => a.id === d.account_id)?.nome ?? '—'}</td>
                       <td className="px-3 py-2 text-slate-700">
-                        <span className={`font-semibold ${d.descricao.toLowerCase().includes('anula') ? 'text-amber-700' : 'text-emerald-700'}`}>
-                          {d.descricao.toLowerCase().includes('anula') ? 'Anulação' : 'Depósito'}
-                        </span>
-                        <span className="text-slate-500"> · {formatDate(d.data_lancamento)} · {d.descricao}</span>
+                        {(() => {
+                          const isAnul = d.natureza
+                            ? d.natureza === 'anulacao'
+                            : d.descricao.toLowerCase().includes('anula');
+                          return (
+                            <>
+                              <span className={`font-semibold ${isAnul ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                {isAnul ? 'Anulação' : 'Depósito'}
+                              </span>
+                              <span className="text-slate-500"> · {formatDate(d.data_lancamento)} · {d.descricao}</span>
+                            </>
+                          );
+                        })()}
                       </td>
-                      <td className={`px-3 py-2 text-right font-semibold ${d.descricao.toLowerCase().includes('anula') ? 'text-amber-700' : 'text-emerald-700'}`}>
-                        {formatCurrency(d.valor)}
+                      <td className="px-3 py-2 text-right font-semibold" style={{}}>
+                        {(() => {
+                          const isAnul = d.natureza
+                            ? d.natureza === 'anulacao'
+                            : d.descricao.toLowerCase().includes('anula');
+                          return (
+                            <span className={isAnul ? 'text-amber-700' : 'text-emerald-700'}>
+                              {formatCurrency(d.valor)}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center justify-center gap-1">

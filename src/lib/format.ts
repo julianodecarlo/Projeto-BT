@@ -69,7 +69,7 @@ export function sumDecimal(values: (number | string | null | undefined)[]): Deci
 // (execução exclusiva de Orçamento Vigente) e as Contas de Convênio NUNCA
 // recebem rótulo de categoria orçamentária.
 export function rotuloTipoLancamento(
-  t: Pick<Transaction, 'descricao' | 'tipo' | 'tipo_orcamento'>,
+  t: Pick<Transaction, 'descricao' | 'tipo' | 'tipo_orcamento' | 'natureza'>,
   categoria?: Account['categoria']
 ): string {
   if (t.descricao === 'Saldo Anterior') return 'Saldo Inicial';
@@ -78,6 +78,7 @@ export function rotuloTipoLancamento(
     return 'Transf. entre Contas';
   }
   if (t.tipo === 'deposito_anulacao') {
+    if (t.natureza) return t.natureza === 'anulacao' ? 'Anulação de Despesa' : 'Depósito';
     return t.descricao.toLowerCase().includes('anula') ? 'Anulação de Despesa' : 'Depósito';
   }
   if (categoria === 'convenio') return 'Conta Convênio';

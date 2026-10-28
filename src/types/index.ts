@@ -91,6 +91,7 @@ export interface Transaction {
   ordem: number;
   tipo: TransactionTipo | null;
   fonte_orcamentaria: FonteOrcamentaria | null;
+  natureza: 'deposito' | 'anulacao' | null;
   created_at: string;
 }
 
