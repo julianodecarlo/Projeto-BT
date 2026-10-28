@@ -1,7 +1,9 @@
 import { supabase } from './supabase';
 import { getSaldoAbertura, getBtAnterior } from './recalc';
+import { calcSaldoFonte } from '@/services/convenioRecalc';
+import { fetchAll } from './fetchAll';
 import { sortAccounts } from './sortAccounts';
-import type { Account, BtReport, Convenio } from '@/types';
+import type { Account, BtReport, Convenio, FonteOrcamentaria, Transaction } from '@/types';
 
 /*
  * Transposição de saldos (regra da continuidade):
@@ -66,13 +68,29 @@ export async function transposeSaldos(newBt: BtReport): Promise<void> {
   }
 
   // ---- Convênios: snapshot das fontes (saldo anterior = final do BT anterior)
-  // Saldos do BT anterior pré-buscados em lote (evita 1 consulta por convênio)
+  // Saldo final do BT anterior por fonte = snapshot do BT anterior + lançamentos
+  // 'deposito_anulacao' do BT anterior (calcSaldoFonte). Sem snapshot anterior,
+  // mantém o cadastro do convênio como hoje.
   const prevConvenios = previousBt ? await fetchPrevConvenioSaldos(previousBt) : null;
   const convRows: Record<string, unknown>[] = [];
   for (const conv of convenios) {
-    const saldos = previousBt
-      ? prevConvenios?.convenioPorId.get(conv.id) ?? { fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44 }
-      : { fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44 };
+    let saldos: { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number } = {
+      fonte_5: conv.fonte_5, fonte_45: conv.fonte_45, fonte_4: conv.fonte_4, fonte_44: conv.fonte_44,
+    };
+    if (previousBt && prevConvenios) {
+      const snapshot = prevConvenios.convenioPorId.get(conv.id);
+      if (snapshot) {
+        const accIds = new Set<string>(conv.finance_account_id ? [conv.finance_account_id] : []);
+        const lancamentos = prevConvenios.lancamentosPorBt.get(previousBt.id) ?? [];
+        const final: Record<FonteOrcamentaria, number> = {
+          fonte_5: calcSaldoFonte(snapshot.fonte_5, lancamentos, accIds, 'fonte_5'),
+          fonte_45: calcSaldoFonte(snapshot.fonte_45, lancamentos, accIds, 'fonte_45'),
+          fonte_4: calcSaldoFonte(snapshot.fonte_4, lancamentos, accIds, 'fonte_4'),
+          fonte_44: calcSaldoFonte(snapshot.fonte_44, lancamentos, accIds, 'fonte_44'),
+        };
+        saldos = final;
+      }
+    }
 
     convRows.push({
       bt_report_id: newBt.id,
@@ -131,10 +149,12 @@ async function fetchPrevReceitaSaldos(bt: BtReport): Promise<{ receitaPorNome: M
   return { receitaPorNome };
 }
 
-// Pré-busca em lote dos saldos das fontes de convênio do BT anterior.
-// Reproduz getFontesFinal: usa o snapshot da tabela bt_convenios se existir,
-// senão o cadastro do convênio.
-async function fetchPrevConvenioSaldos(bt: BtReport): Promise<{ convenioPorId: Map<string, { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }> }> {
+// Pré-busca em lote dos dados do BT anterior para convênios: snapshot das
+// fontes (tabela bt_convenios) e lançamentos 'deposito_anulacao' do BT.
+async function fetchPrevConvenioSaldos(bt: BtReport): Promise<{
+  convenioPorId: Map<string, { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }>;
+  lancamentosPorBt: Map<string, Transaction[]>;
+}> {
   const convenioPorId = new Map<string, { fonte_5: number; fonte_45: number; fonte_4: number; fonte_44: number }>();
   const { data } = await supabase
     .from('bt_convenios')
@@ -150,5 +170,8 @@ async function fetchPrevConvenioSaldos(bt: BtReport): Promise<{ convenioPorId: M
       });
     }
   }
-  return { convenioPorId };
+  const lancamentos = await fetchAll<Transaction>((from, to) =>
+    supabase.from('transactions').select('*').eq('bt_report_id', bt.id).eq('tipo', 'deposito_anulacao').range(from, to));
+  const lancamentosPorBt = new Map<string, Transaction[]>([[bt.id, lancamentos]]);
+  return { convenioPorId, lancamentosPorBt };
 }
