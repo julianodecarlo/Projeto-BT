@@ -35,7 +35,7 @@ interface BtContextValue {
   salvarBtRascunho: () => Promise<boolean>;
   validarBtAtual: () => Promise<PendenciaItem[]>;
   fecharBtAtual: () => Promise<PendenciaItem[]>;
-  updateSaldosReaberto: (btId: string) => Promise<boolean>;
+  updateSaldosReaberto: (btId: string) => Promise<string | null>;
 }
 
 const BtContext = createContext<BtContextValue | null>(null);
@@ -196,12 +196,17 @@ export function BtProvider({ children }: { children: ReactNode }) {
   // Fluxo manual de continuidade em BT reaberto: compara o saldo final do BT
   // anterior fechado com o saldo inicial armazenado no BT ALVO (que pode não
   // ser o atualmente aberto no app) e, se diferente, substitui a âncora "Saldo
-  // Anterior" de cada conta afetada.
-  const updateSaldosReaberto = useCallback(async (btId: string): Promise<boolean> => {
+  // Anterior" de cada conta afetada. Retorna null em sucesso ou mensagem de
+  // erro legível — o modal exibe a mensagem, nunca falha em silêncio.
+  const updateSaldosReaberto = useCallback(async (btId: string): Promise<string | null> => {
     const target = await fetchBt(btId);
-    if (!target) return false;
+    if (!target) return 'BT não encontrado.';
+    // a) BT fechado é imutável: nunca gravar nele.
+    if (target.status !== 'reaberto') {
+      return 'Este BT não está reaberto. Reabra-o antes de atualizar os saldos.';
+    }
     const prev = await getBtAnterior(target);
-    if (!prev) return false;
+    if (!prev) return 'Não há BT anterior para comparar.';
     const accs = sortAccounts(await listAccounts());
 
     const aberturaMap = new Map<string, number>();
@@ -216,7 +221,7 @@ export function BtProvider({ children }: { children: ReactNode }) {
       .select('id, account_id, saldo_anterior')
       .eq('bt_report_id', target.id)
       .eq('descricao', 'Saldo Anterior');
-    if (anchorErr) return false;
+    if (anchorErr) return 'Erro ao ler os saldos iniciais do BT. Tente novamente.';
     const rows = (anchors || []) as { id: string; account_id: string; saldo_anterior: number | null }[];
 
     const updates: Promise<Error | null>[] = [];
@@ -226,26 +231,50 @@ export function BtProvider({ children }: { children: ReactNode }) {
       if (Math.round((row.saldo_anterior || 0) * 100) === Math.round(novo * 100)) continue;
       updates.push(
         (async () => {
-          const { error: updErr } = await supabase
+          // b) Confirma que a linha foi realmente alterada: 0 linhas afetadas é erro.
+          const { data: updData, error: updErr } = await supabase
             .from('transactions')
             .update({ saldo_anterior: novo, saldo_final: novo })
-            .eq('id', row.id);
-          return updErr;
+            .eq('id', row.id)
+            .select('id');
+          if (updErr) return updErr;
+          if (!updData || updData.length === 0) {
+            return new Error('Linha de saldo inicial não encontrada ao gravar.');
+          }
+          return null;
         })()
       );
     }
     const results = await Promise.all(updates);
-    if (results.some(r => r !== null)) return false;
+    if (results.some(r => r !== null)) {
+      return 'Não foi possível gravar o saldo inicial. Verifique se o BT continua reaberto e tente novamente.';
+    }
 
     // Reprocessa o BT alvo para propagar o novo saldo inicial pela cadeia de
     // lançamentos (âncora + entradas − saídas, linha por linha).
     await forceRecalcBtSaldos(target, accs);
 
+    // c) Confirmação de leitura: relê as âncoras do banco e exige que cada uma
+    // seja igual à abertura calculada (exatidão de centavos).
+    const { data: recheck, error: recheckErr } = await supabase
+      .from('transactions')
+      .select('account_id, saldo_anterior')
+      .eq('bt_report_id', target.id)
+      .eq('descricao', 'Saldo Anterior');
+    if (recheckErr) return 'Erro ao confirmar a gravação dos saldos. Tente novamente.';
+    for (const r of (recheck || []) as { account_id: string; saldo_anterior: number | null }[]) {
+      const esperado = aberturaMap.get(r.account_id);
+      if (esperado === undefined) continue;
+      if (Math.round((r.saldo_anterior || 0) * 100) !== Math.round(esperado * 100)) {
+        return 'A gravação não foi confirmada no banco de dados. Nenhuma alteração foi aplicada — tente novamente.';
+      }
+    }
+
     // Se o BT alvo é o ativo, força refetch dos dados exibidos.
     if (currentBt?.id === target.id) {
       await refreshBt();
     }
-    return true;
+    return null;
   }, [currentBt, refreshBt]);
 
   const deleteBt = useCallback(async (id: string): Promise<boolean> => {

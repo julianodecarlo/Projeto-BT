@@ -88,13 +88,13 @@ export default function AtualizarSaldoModal({ open, onClose, bt, onAtualizado }:
   const confirmar = async () => {
     setLoading(true);
     setError('');
-    const ok = await updateSaldosReaberto(bt.id);
+    const failMsg = await updateSaldosReaberto(bt.id);
     setLoading(false);
-    if (ok) {
+    if (failMsg === null) {
       setDone(true);
       onAtualizado();
     } else {
-      setError('Não foi possível atualizar os saldos. Tente novamente.');
+      setError(failMsg);
     }
   };
 
