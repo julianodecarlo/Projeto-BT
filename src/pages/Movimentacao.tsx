@@ -11,6 +11,7 @@ import {
   recalcAccountSaldos as svcRecalcAccountSaldos,
 } from '@/services/transactionService';
 import { Card, Button, EmptyState, Field, Select } from '@/components/ui/Field';
+import MovimentacaoConveniosCard from '@/components/MovimentacaoConveniosCard';
 import Modal from '@/components/ui/Modal';
 import { MoneyInput } from '@/components/ui/MoneyInput';
 import { formatCurrency, formatDate, toDecimal, toNumber, sumDecimal, todayISO } from '@/lib/format';
@@ -657,6 +658,8 @@ export default function Movimentacao() {
   }
 
   const activeAccounts = sortAccounts(accounts.filter(a => a.ativo));
+  const convenioAccounts = useMemo(() => activeAccounts.filter(a => a.categoria === 'convenio'), [activeAccounts]);
+  const contasSemConvenio = useMemo(() => activeAccounts.filter(a => a.categoria !== 'convenio'), [activeAccounts]);
 
   return (
     <>
@@ -712,6 +715,15 @@ export default function Movimentacao() {
           </Button>
         </div>
 
+        {convenioAccounts.length > 0 && (
+          <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 text-sm text-blue-800 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              Pagamentos em contas de convênio são lançados no card Lançamento de Movimentações - Convênios, com a Fonte Orçamentária (5/45/4/44).
+            </span>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -726,7 +738,7 @@ export default function Movimentacao() {
               </tr>
             </thead>
             <tbody>
-              {activeAccounts.map(acc => {
+              {contasSemConvenio.map(acc => {
                 const row = inputs[acc.id] || { vigente: '', restos_pagar: '', diversos_credores: '' };
                 const transf = transferenciasPorConta.get(acc.id) ?? 0;
                 const saldoFinal = getAccountSaldoFinal(acc.id);
@@ -791,7 +803,20 @@ export default function Movimentacao() {
         </div>
       </Card>
 
-      {/* Módulos simples de lançamento — protegidos pela barreira de alterações não salvas */}
+      {/* Pagamentos em contas de convênio, por Fonte Orçamentária */}
+      <MovimentacaoConveniosCard
+        btId={currentBt.id}
+        btData={currentBt.data}
+        fechado={fechado}
+        convenioAccounts={convenioAccounts}
+        convenios={convenios}
+        transactions={transactions}
+        onSaved={async (contasTocadas) => {
+          await recalcFontesConvenio(contasTocadas);
+          setConvenios(await listConvenios());
+          fetchTransactions();
+        }}
+      />
       <div
         className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start"
         onClickCapture={interceptIfDirty}

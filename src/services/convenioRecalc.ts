@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import { toDecimal } from '@/lib/format';
 import type { Convenio, FonteOrcamentaria, Transaction } from '@/types';
 
@@ -33,8 +34,8 @@ export async function getSaldoAnteriorFontes(btId: string, convenioId: string): 
   return data as Record<FonteOrcamentaria, number>;
 }
 
-// Saldo de UMA fonte = snapshot + depósitos - anulações, filtrando pelo ID do
-// convênio (via conta financeira) E pela fonte exata do lançamento.
+// Saldo de UMA fonte = snapshot + depósitos/anulações − saídas orçamentárias,
+// filtrando pelo ID do convênio (via conta financeira) E pela fonte exata.
 export function calcSaldoFonte(
   saldoAnterior: number,
   lancamentos: Transaction[],
@@ -43,12 +44,22 @@ export function calcSaldoFonte(
 ): number {
   let saldo = toDecimal(saldoAnterior);
   for (const tx of lancamentos) {
-    // Filtro estrito: conta pertence ao convênio E fonte_orcamentaria é EXATAMENTE a fonte
     if (!convenioAccIds.has(tx.account_id)) continue;
-    if (tx.fonte_orcamentaria !== fonte) continue;
-    // Depósitos e anulações chegam como 'entrada' (anulação é estorno que credita
-    // a conta, mas DESCONTA da fonte orçamentária)
-    saldo = saldo.plus(tx.valor);
+    // Créditos: depósitos e anulações com a fonte exata (anulação é estorno que
+    // SOMA de volta na fonte).
+    if (tx.tipo === 'deposito_anulacao' && tx.fonte_orcamentaria === fonte) {
+      saldo = saldo.plus(tx.valor);
+      continue;
+    }
+    // Débitos: saídas orçamentárias (pagamentos) com a fonte exata.
+    // Saída SEM fonte_orcamentaria não afeta nenhuma fonte (legado).
+    if (
+      tx.tipo_movimento === 'saida' &&
+      tx.tipo_orcamento != null &&
+      tx.fonte_orcamentaria === fonte
+    ) {
+      saldo = saldo.minus(tx.valor);
+    }
   }
   return saldo.toNumber();
 }
@@ -101,12 +112,14 @@ export async function recalcConveniosPorContas(
   const afetados = convenios.filter(c => c.finance_account_id && tocadas.has(c.finance_account_id));
   if (afetados.length === 0) return 0;
 
-  const { data } = await supabase
-    .from('transactions')
-    .select('account_id, valor, fonte_orcamentaria')
-    .eq('bt_report_id', btId)
-    .eq('tipo', 'deposito_anulacao');
-  const lancamentos = (data as Transaction[]) || [];
+  const rows = await fetchAll<Transaction>((from, to) =>
+    supabase
+      .from('transactions')
+      .select('account_id, valor, tipo, tipo_movimento, tipo_orcamento, fonte_orcamentaria')
+      .eq('bt_report_id', btId)
+      .range(from, to)
+  );
+  const lancamentos = rows;
 
   let count = 0;
   for (const conv of afetados) {
