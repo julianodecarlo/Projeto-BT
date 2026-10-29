@@ -131,9 +131,22 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
     } else {
       payload.ordem = await fetchNextOrdem(e.btReportId, e.accountId);
     }
-    const { error } = await supabase.from('transactions').insert(payload);
-    if (error) console.error('Erro ao salvar movimentação:', error.message || error);
-    return !error;
+    const { data, error } = (await supabase.from('transactions').insert(payload)
+      .select(e.natureza ? 'id, natureza' : 'id')) as { data: Record<string, unknown>[] | null; error: { message: string } | null };
+    if (error) {
+      console.error('Erro ao salvar movimentação:', error.message || error);
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.error('Erro ao salvar movimentação: 0 linhas inseridas.');
+      return false;
+    }
+    // Proibido falhar em silêncio: compara a natureza gravada com a escolhida.
+    if (e.natureza && (data[0].natureza as string | null) !== e.natureza) {
+      console.error(`Natureza gravada divergente: esperado ${e.natureza}, gravado ${String(data[0].natureza)}`);
+      return false;
+    }
+    return true;
   } catch (error) {
     console.error('Erro ao salvar movimentação:', error);
     return false;
@@ -145,9 +158,25 @@ export async function updateTransaction(
   fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento' | 'fonte_orcamentaria' | 'natureza'>>
 ): Promise<boolean> {
   try {
-    const { error } = await supabase.from('transactions').update(fields).eq('id', id);
-    if (error) console.error('Erro ao atualizar movimentação:', error.message || error);
-    return !error;
+    // .select() no retorno: 0 linhas afetadas é falha, não sucesso silencioso.
+    const { data, error } = (await supabase
+      .from('transactions')
+      .update(fields)
+      .eq('id', id)
+      .select(fields.natureza !== undefined ? 'id, natureza' : 'id')) as { data: Record<string, unknown>[] | null; error: { message: string } | null };
+    if (error) {
+      console.error('Erro ao atualizar movimentação:', error.message || error);
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.error('Erro ao atualizar movimentação: 0 linhas afetadas.');
+      return false;
+    }
+    if (fields.natureza !== undefined && (data[0].natureza as string | null) !== fields.natureza) {
+      console.error(`Natureza gravada divergente: esperado ${fields.natureza}, gravado ${String(data[0].natureza)}`);
+      return false;
+    }
+    return true;
   } catch (error) {
     console.error('Erro ao atualizar movimentação:', error);
     return false;
