@@ -1,76 +1,72 @@
-import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, RefCallback } from 'react';
+import { useEffect, useState } from 'react';
 
 interface MoneyInputProps {
   value: number | null;
-  onValueChange: (v: number | null) => void;
+  onValueChange: (value: number) => void;
   className?: string;
   placeholder?: string;
   disabled?: boolean;
-  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
-  inputRef?: RefCallback<HTMLInputElement>;
-  id?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  inputRef?: (el: HTMLInputElement | null) => void;
 }
 
-// Máscara BRL: exibe formatado quando desfocado, texto livre enquanto digita.
-// Emite número a cada digitação; no blur apenas reformatar (sem reemitir valor
-// igual), para nunca apagar o que foi digitado.
-export function MoneyInput({
-  value, onValueChange, className = '', placeholder = '0,00', disabled, onKeyDown, inputRef, id,
-}: MoneyInputProps) {
-  const format = (n: number | null) =>
-    n == null || isNaN(n) ? '' : n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const numberFormat = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const [text, setText] = useState(() => format(value));
+// Converte dígitos crus (centavos) em texto BRL: "123456" -> "1.234,56"
+const format = (digits: string, neg: boolean): string => {
+  if (!digits) return '';
+  const value = Number(digits) / 100;
+  return `${neg ? '-' : ''}${numberFormat.format(value)}`;
+};
+
+const isNegative = (v: number | null | undefined): boolean => v != null && v < 0;
+const centsFrom = (v: number | null | undefined): string =>
+  v != null && v !== 0 ? Math.round(Math.abs(v) * 100).toString() : '';
+
+// Input monetário padrão BRL, sem spinners, com máscara em tempo real.
+export function MoneyInput({
+  value,
+  onValueChange,
+  className = '',
+  placeholder = '0,00',
+  disabled,
+  onKeyDown,
+  inputRef,
+}: MoneyInputProps) {
+  const [display, setDisplay] = useState<string>('');
   const [focused, setFocused] = useState(false);
-  const lastEmitted = useRef<number | null>(value ?? null);
 
   useEffect(() => {
-    if (!focused) setText(format(value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!focused) {
+      setDisplay(format(centsFrom(value), isNegative(value)));
+    }
   }, [value, focused]);
 
-  const parse = (s: string): number | null => {
-    const clean = s.replace(/R\$/g, '').replace(/\s/g, '').trim();
-    if (!clean) return null;
-    if (!/^[\d.,]+$/.test(clean)) return null;
-    const normalized = clean.replace(/\./g, '').replace(',', '.');
-    const n = parseFloat(normalized);
-    return isNaN(n) ? null : n;
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const neg = e.target.value.trim().startsWith('-');
+    const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '');
+    setDisplay(format(digits, neg));
+    if (!digits) {
+      onValueChange(0);
+      return;
+    }
+    const abs = parseInt(digits, 10) / 100;
+    onValueChange(neg ? -abs : abs);
   };
 
   return (
     <input
-      id={id}
-      ref={inputRef}
       type="text"
-      inputMode="decimal"
-      value={text}
+      inputMode="numeric"
+      ref={inputRef}
+      value={display}
       disabled={disabled}
-      placeholder={placeholder}
-      className={className}
       onFocus={() => setFocused(true)}
-      onChange={(e) => {
-        const raw = e.target.value;
-        if (!/^[\d.,]*$/.test(raw)) return;
-        setText(raw);
-        const n = parse(raw);
-        lastEmitted.current = n;
-        onValueChange(n);
-      }}
-      onBlur={() => {
-        setFocused(false);
-        const n = parse(text);
-        const out = n == null ? null : Math.round(n * 100) / 100;
-        setText(format(out));
-        if (out !== lastEmitted.current) {
-          lastEmitted.current = out;
-          onValueChange(out);
-        }
-      }}
+      onBlur={() => setFocused(false)}
       onKeyDown={onKeyDown}
+      onChange={handleChange}
+      className={`text-right border border-slate-300 rounded-md outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors ${className}`}
+      placeholder={placeholder}
     />
   );
 }
-
-export default MoneyInput;
