@@ -129,4 +129,37 @@ export async function recalcConveniosPorContas(
   return count;
 }
 
+// Recalcula todos os convênios a partir do BT mais recente (por data, depois
+// created_at) e grava em convenios. Idempotente: a tabela convenios sempre
+// reflete o estado do BT vigente (snapshot dele + movimentos dele).
+// Retorna a lista de convênios recalculados (vazia se não houver BT).
+export async function recalcAllConvenios(): Promise<Convenio[]> {
+  const { data: bt } = await supabase
+    .from('bt_reports')
+    .select('id')
+    .order('data', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!bt) return [];
+
+  const convRes = await supabase.from('convenios').select('*');
+  if (convRes.error || !convRes.data) return [];
+  const convenios = convRes.data as Convenio[];
+
+  const lancamentos = await fetchAll<Transaction>((from, to) =>
+    supabase
+      .from('transactions')
+      .select('account_id, valor, tipo, tipo_movimento, tipo_orcamento, fonte_orcamentaria')
+      .eq('bt_report_id', bt.id)
+      .range(from, to)
+  );
+
+  for (const conv of convenios) {
+    if (!conv.finance_account_id) continue;
+    await recalcConvenioFontes(bt.id, conv, lancamentos);
+  }
+  return convenios;
+}
+
 export { FONTES };

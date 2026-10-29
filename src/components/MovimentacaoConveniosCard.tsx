@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Save, Pencil, Trash2, AlertTriangle, Check } from 'lucide-react';
 import { Card, Button, EmptyState } from '@/components/ui/Field';
 import { MoneyInput } from '@/components/ui/MoneyInput';
-import { formatCurrency, toDecimal } from '@/lib/format';
+import { formatCurrency } from '@/lib/format';
+import {
+  buildSnapshot,
+  buildSyncSignature,
+  hasUnsaved,
+  mergeTypedCells,
+  projectedSaldoCents,
+  setCell,
+  totalCentsOf,
+  fonteOf,
+  type CellsByAccount,
+} from '@/lib/convenioCardState';
 import type { Account, BudgetType, Convenio, FonteOrcamentaria, Transaction } from '@/types';
 import {
   insertEntry,
@@ -10,7 +21,7 @@ import {
   deleteTransaction,
   recalcAccountSaldos,
 } from '@/services/transactionService';
-import { setUnsavedGuard, setUnsavedSaver, subscribeUnsavedGuard, hasUnsavedGuard } from '@/lib/unsavedGuard';
+import { setUnsavedGuard, setUnsavedSaver } from '@/lib/unsavedGuard';
 
 const FONTES: FonteOrcamentaria[] = ['fonte_5', 'fonte_45', 'fonte_4', 'fonte_44'];
 const FONTES_LABEL: Record<FonteOrcamentaria, string> = {
@@ -22,21 +33,6 @@ const GRUPOS: { field: BudgetType; desc: string; label: string }[] = [
   { field: 'diversos_credores', desc: 'Diversos Credores', label: 'Diversos Credores' },
 ];
 const GUARD_ORIGIN = 'movimentacao_convenios';
-
-type CellInputs = Record<BudgetType, Record<FonteOrcamentaria, string>>;
-
-const emptyCells = (): CellInputs => ({
-  vigente: { fonte_5: '', fonte_45: '', fonte_4: '', fonte_44: '' },
-  restos_pagar: { fonte_5: '', fonte_45: '', fonte_4: '', fonte_44: '' },
-  diversos_credores: { fonte_5: '', fonte_45: '', fonte_4: '', fonte_44: '' },
-});
-
-const toCents = (raw: string | undefined): number => {
-  const s = String(raw ?? '').trim().replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(s);
-  if (isNaN(n) || n === 0) return 0;
-  return Math.round(n * 100);
-};
 
 interface Props {
   btId: string;
@@ -51,8 +47,8 @@ interface Props {
 export default function MovimentacaoConveniosCard({
   btId, btData, fechado, convenioAccounts, convenios, transactions, onSaved,
 }: Props) {
-  const [inputs, setInputs] = useState<Record<string, CellInputs>>({});
-  const [savedSnapshot, setSavedSnapshot] = useState<Record<string, CellInputs>>({});
+  const [inputs, setInputs] = useState<CellsByAccount>({});
+  const [savedSnapshot, setSavedSnapshot] = useState<CellsByAccount>({});
   const [aba, setAba] = useState<BudgetType>('vigente');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +63,6 @@ export default function MovimentacaoConveniosCard({
     return map;
   }, [convenios]);
 
-  // Pagamentos salvos com fonte (histórico editável) e linhas legado (somente leitura)
   const pagamentos = useMemo(
     () => transactions.filter(t => t.tipo_movimento === 'saida' && t.tipo_orcamento != null && t.fonte_orcamentaria != null),
     [transactions]
@@ -77,101 +72,65 @@ export default function MovimentacaoConveniosCard({
     [transactions]
   );
 
-  // Estado "sujo" comparado ao snapshot gravado (usado também para o saver
-  // global e para NÃO sobrescrever digitação em andamento).
-  const hasUnsaved = useMemo(
-    () => Object.keys(inputs).some(accId => {
-      const row = inputs[accId];
-      const saved = savedSnapshot[accId] ?? emptyCells();
-      return GRUPOS.some(g => FONTES.some(f => toCents(row?.[g.field]?.[f]) !== toCents(saved[g.field][f])));
-    }),
-    [inputs, savedSnapshot]
-  );
+  const convenioAccountIds = useMemo(() => convenioAccounts.map(a => a.id), [convenioAccounts]);
   const hasUnsavedRef = useRef(false);
-  hasUnsavedRef.current = hasUnsaved;
 
-  // Snapshot do que está gravado; inputs refletem o banco SOMENTE quando não há
-  // digitação pendente — recarregar a lista pelo pai nunca apaga o que foi
-  // digitado e ainda não salvo.
-  useEffect(() => {
-    const state: Record<string, CellInputs> = {};
-    for (const acc of convenioAccounts) state[acc.id] = emptyCells();
-    for (const tx of pagamentos) {
-      if (!state[tx.account_id]) state[tx.account_id] = emptyCells();
-      state[tx.account_id][tx.tipo_orcamento as BudgetType][tx.fonte_orcamentaria as FonteOrcamentaria] = String(tx.valor || '');
-    }
-    setSavedSnapshot(state);
-    setInputs(prev => {
-      if (!hasUnsavedRef.current) return state;
-      // Preserva células digitadas; células novas/vazias ficam do snapshot.
-      const merged: Record<string, CellInputs> = {};
-      for (const accId of Object.keys(state)) {
-        const prevRow = prev[accId];
-        merged[accId] = state[accId];
-        if (prevRow) {
-          for (const g of GRUPOS) {
-            for (const f of FONTES) {
-              const prevVal = prevRow[g.field]?.[f] ?? '';
-              if (toCents(prevVal) !== toCents(state[accId][g.field][f])) merged[accId][g.field][f] = prevVal;
-            }
-          }
-        }
-      }
-      return merged;
-    });
-    if (!hasUnsavedRef.current) setUnsavedGuard(GUARD_ORIGIN, false);
-  }, [convenioAccounts, pagamentos]);
+  const isDirty = useMemo(() => hasUnsaved(inputs, savedSnapshot), [inputs, savedSnapshot]);
+  hasUnsavedRef.current = isDirty;
+
+  // Sincronização com o banco disparada SOMENTE por assinatura de conteúdo
+  // (BT + contas + pagamentos gravados) — nunca por identidade de arrays.
+  const syncSignature = useMemo(
+    () => buildSyncSignature(btId, convenioAccountIds, pagamentos),
+    [btId, convenioAccountIds, pagamentos]
+  );
+  const lastSyncSignature = useRef<string | null>(null);
 
   useEffect(() => {
-    setUnsavedGuard(GUARD_ORIGIN, hasUnsaved);
-  }, [hasUnsaved]);
+    if (lastSyncSignature.current === syncSignature) return;
+    lastSyncSignature.current = syncSignature;
+    const snapshot = buildSnapshot(convenioAccountIds, pagamentos);
+    setSavedSnapshot(snapshot);
+    setInputs(prev => (hasUnsavedRef.current ? mergeTypedCells(prev, snapshot) : snapshot));
+  }, [syncSignature, convenioAccountIds, pagamentos]);
+
+  // Descarte explícito (barreira global pediu "descartar"): restaura o snapshot.
+  // Nada de resets automáticos por listener — só quando o card for solicitado.
+  useEffect(() => {
+    setUnsavedGuard(GUARD_ORIGIN, isDirty);
+  }, [isDirty]);
 
   useEffect(() => () => setUnsavedGuard(GUARD_ORIGIN, false), []);
 
   const handleSaveRef = useRef<() => Promise<void>>(async () => {});
+  const discardRef = useRef<() => void>(() => {});
   useEffect(() => {
     return setUnsavedSaver(GUARD_ORIGIN, async () => {
       await handleSaveRef.current();
-      return !hasUnsavedGuard();
+      return !hasUnsavedRef.current;
     });
   }, []);
+  discardRef.current = () => {
+    setInputs(savedSnapshot);
+  };
 
-  // Descarga externa (barreira global descartou tudo): volta ao snapshot.
-  const guardWasDirty = useRef(false);
-  useEffect(() => {
-    return subscribeUnsavedGuard(() => {
-      const dirtyNow = hasUnsavedGuard();
-      if (guardWasDirty.current && !dirtyNow && !hasUnsavedRef.current) {
-        setInputs(savedSnapshot);
-      }
-      guardWasDirty.current = dirtyNow;
-    });
-  }, [savedSnapshot]);
-
-  const handleInputChange = (accId: string, field: BudgetType, fonte: FonteOrcamentaria, value: string) => {
-    setInputs(prev => ({
-      ...prev,
-      [accId]: {
-        ...emptyCells(),
-        ...prev[accId],
-        [field]: { ...(prev[accId]?.[field] ?? emptyCells()[field]), [fonte]: value },
-      },
-    }));
+  const handleInputChange = (accId: string, grupo: BudgetType, fonte: FonteOrcamentaria, cents: number) => {
+    setInputs(prev => setCell(prev, accId, grupo, fonte, cents));
   };
 
   const projectedSaldo = (conv: Convenio, fonte: FonteOrcamentaria): number => {
-    const digitado = GRUPOS.reduce((s, g) => s + toCents(inputs[conv.finance_account_id ?? '']?.[g.field]?.[fonte]), 0) / 100;
-    return toDecimal(conv[fonte]).minus(digitado).toNumber();
+    if (!conv.finance_account_id) return null as unknown as number;
+    return projectedSaldoCents(fonteOf(conv, fonte), inputs, conv.finance_account_id, fonte) / 100;
   };
 
-  // Aviso (não bloqueio): fontes que ficariam negativas com a digitação atual.
   const fontesNegativasGerais = useMemo(() => {
     const neg: string[] = [];
     for (const acc of convenioAccounts) {
       const conv = convenioPorConta.get(acc.id);
       if (!conv) continue;
       for (const fonte of FONTES) {
-        if (projectedSaldo(conv, fonte) < 0) neg.push(`${conv.nome} — ${FONTES_LABEL[fonte]}`);
+        const proj = projectedSaldo(conv, fonte);
+        if (proj != null && proj < 0) neg.push(`${conv.nome} — ${FONTES_LABEL[fonte]}`);
       }
     }
     return neg;
@@ -188,8 +147,8 @@ export default function MovimentacaoConveniosCard({
     for (const acc of convenioAccounts) {
       for (const g of GRUPOS) {
         for (const fonte of FONTES) {
-          const raw = inputs[acc.id]?.[g.field]?.[fonte];
-          const v = raw && parseFloat(raw) > 0 ? toDecimal(raw).toNumber() : 0;
+          const cents = inputs[acc.id]?.[g.field]?.[fonte] ?? 0;
+          const v = cents > 0 ? cents / 100 : 0;
           const existing = pagamentos.find(
             t => t.account_id === acc.id && t.tipo_orcamento === g.field && t.fonte_orcamentaria === fonte
           );
@@ -249,17 +208,15 @@ export default function MovimentacaoConveniosCard({
   const startEdit = (tx: Transaction) => {
     setEditing(tx.id);
     setAba((tx.tipo_orcamento ?? 'vigente') as BudgetType);
-    setInputs(prev => ({
-      ...prev,
-      [tx.account_id]: {
-        ...emptyCells(),
-        ...prev[tx.account_id],
-        [tx.tipo_orcamento as BudgetType]: {
-          ...(prev[tx.account_id]?.[tx.tipo_orcamento as BudgetType] ?? emptyCells()[tx.tipo_orcamento as BudgetType]),
-          [tx.fonte_orcamentaria as FonteOrcamentaria]: String(tx.valor || ''),
-        },
-      },
-    }));
+    setInputs(prev =>
+      setCell(
+        prev,
+        tx.account_id,
+        tx.tipo_orcamento as BudgetType,
+        tx.fonte_orcamentaria as FonteOrcamentaria,
+        Math.round((tx.valor || 0) * 100)
+      )
+    );
   };
 
   const deletePagamento = async (tx: Transaction) => {
@@ -273,26 +230,24 @@ export default function MovimentacaoConveniosCard({
     await onSaved([tx.account_id]);
   };
 
-  // Contador por aba: valor digitado não salvo OU já gravado no BT.
   const abasComValor = useMemo(() => {
     const set = new Set<BudgetType>();
     for (const p of pagamentos) set.add(p.tipo_orcamento as BudgetType);
     for (const accId of Object.keys(inputs)) {
       for (const g of GRUPOS) {
-        if (FONTES.some(f => toCents(inputs[accId]?.[g.field]?.[f]) !== 0)) set.add(g.field);
+        if (totalCentsOf(inputs, accId, g.field) !== 0) set.add(g.field);
       }
     }
     return set;
   }, [pagamentos, inputs]);
 
   const totalASalvar = useMemo(
-    () => Object.keys(inputs).reduce((s, accId) =>
-      s + GRUPOS.reduce((s2, g) => s2 + FONTES.reduce((s3, f) => s3 + toCents(inputs[accId]?.[g.field]?.[f]), 0), 0), 0) / 100,
+    () => Object.keys(inputs).reduce((s, accId) => s + totalCentsOf(inputs, accId, null), 0) / 100,
     [inputs]
   );
 
   const totalAba = useMemo(
-    () => convenioAccounts.reduce((s, acc) => s + FONTES.reduce((s2, f) => s2 + toCents(inputs[acc.id]?.[aba]?.[f]), 0), 0) / 100,
+    () => convenioAccounts.reduce((s, acc) => s + totalCentsOf(inputs, acc.id, aba), 0),
     [convenioAccounts, inputs, aba]
   );
 
@@ -352,10 +307,15 @@ export default function MovimentacaoConveniosCard({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm min-w-[760px]">
+          <colgroup>
+            <col className="w-[22%]" />
+            {FONTES.map(f => <col key={f} className="w-[17%]" />)}
+            <col className="w-[10%]" />
+          </colgroup>
           <thead>
             <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              <th className="px-4 py-2 text-left font-semibold w-56">Conta / Convênio</th>
+              <th className="px-4 py-2 text-left font-semibold">Conta / Convênio</th>
               {FONTES.map(f => (
                 <th key={f} className="px-2 py-2 text-right font-semibold">{FONTES_LABEL[f]}</th>
               ))}
@@ -365,32 +325,35 @@ export default function MovimentacaoConveniosCard({
           <tbody>
             {convenioAccounts.map(acc => {
               const conv = convenioPorConta.get(acc.id);
-              const totalLinha = FONTES.reduce((s, f) => s + toCents(inputs[acc.id]?.[aba]?.[f]), 0) / 100;
+              const totalLinha = totalCentsOf(inputs, acc.id, aba) / 100;
               return (
-                <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                  <td className="px-4 py-1.5">
-                    <p className="text-sm font-medium text-slate-700 whitespace-nowrap">{acc.nome}</p>
+                <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50/50 h-16">
+                  <td className="px-4 py-1.5 min-w-0">
+                    <p className="text-sm font-medium text-slate-700 truncate" title={acc.nome}>{acc.nome}</p>
                   </td>
                   {FONTES.map(f => {
                     const proj = conv ? projectedSaldo(conv, f) : null;
                     return (
-                      <td key={`${acc.id}-${aba}-${f}`} className="px-2 py-1.5 text-right">
+                      <td key={`${acc.id}-${aba}-${f}`} className="px-2 py-1.5 text-right min-w-0">
                         <MoneyInput
-                          value={inputs[acc.id]?.[aba]?.[f] ? parseFloat(inputs[acc.id][aba][f]) : null}
-                          onValueChange={(v) => handleInputChange(acc.id, aba, f, v ? String(v) : '')}
+                          value={(inputs[acc.id]?.[aba]?.[f] ?? 0) / 100}
+                          onValueChange={(v) => handleInputChange(acc.id, aba, f, Math.round((v || 0) * 100))}
                           disabled={fechado}
                           placeholder="0,00"
-                          className="w-24 px-1.5 py-1.5 text-xs"
+                          className="w-full px-1.5 py-1.5 text-[11px] tabular-nums"
                         />
                         {proj != null && (
-                          <p className={`text-[10px] mt-0.5 ${proj < 0 ? 'text-red-700 font-semibold' : 'text-slate-400'}`}>
+                          <p
+                            className={`text-[10px] mt-0.5 truncate ${proj < 0 ? 'text-red-700 font-semibold' : 'text-slate-400'}`}
+                            title={`Saldo: ${formatCurrency(proj)}`}
+                          >
                             Saldo: {formatCurrency(proj)}
                           </p>
                         )}
                       </td>
                     );
                   })}
-                  <td className={`px-3 py-1.5 text-right font-bold bg-slate-100/50 ${totalLinha > 0 ? 'text-slate-700' : 'text-slate-400'}`}>
+                  <td className={`px-3 py-1.5 text-right font-bold bg-slate-100/50 tabular-nums ${totalLinha > 0 ? 'text-slate-700' : 'text-slate-400'}`}>
                     {formatCurrency(totalLinha)}
                   </td>
                 </tr>
@@ -399,12 +362,12 @@ export default function MovimentacaoConveniosCard({
             <tr className="border-t-2 border-slate-200 bg-slate-100 font-bold">
               <td className="px-4 py-2 text-xs text-slate-800 uppercase tracking-wide">Total da aba</td>
               {FONTES.map(f => {
-                const tot = convenioAccounts.reduce((s, acc) => s + toCents(inputs[acc.id]?.[aba]?.[f]), 0) / 100;
+                const tot = convenioAccounts.reduce((s, acc) => s + (inputs[acc.id]?.[aba]?.[f] ?? 0), 0) / 100;
                 return (
-                  <td key={`tot-${f}`} className="px-2 py-2 text-right text-xs text-slate-800">{formatCurrency(tot)}</td>
+                  <td key={`tot-${f}`} className="px-2 py-2 text-right text-xs text-slate-800 tabular-nums">{formatCurrency(tot)}</td>
                 );
               })}
-              <td className="px-3 py-2 text-right text-xs text-slate-800 bg-slate-200/50">{formatCurrency(totalAba)}</td>
+              <td className="px-3 py-2 text-right text-xs text-slate-800 bg-slate-200/50 tabular-nums">{formatCurrency(totalAba / 100)}</td>
             </tr>
           </tbody>
         </table>
@@ -413,7 +376,7 @@ export default function MovimentacaoConveniosCard({
       {/* Rodapé: total geral das três abas */}
       <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
         <p className="text-xs font-semibold text-slate-600">
-          Total a salvar neste BT: <span className="text-slate-800">{formatCurrency(totalASalvar)}</span>
+          Total a salvar neste BT: <span className="text-slate-800 tabular-nums">{formatCurrency(totalASalvar)}</span>
         </p>
       </div>
 
@@ -423,37 +386,48 @@ export default function MovimentacaoConveniosCard({
           <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Pagamentos por Fonte Registrados</h4>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
-                <th className="px-3 py-2 text-left font-semibold">Conta</th>
-                <th className="px-3 py-2 text-left font-semibold">Grupo</th>
-                <th className="px-3 py-2 text-left font-semibold">Fonte</th>
-                <th className="px-3 py-2 text-right font-semibold">Valor</th>
-                <th className="px-3 py-2 text-center font-semibold">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagamentos.map(p => (
-                <tr key={p.id} className={`border-t border-slate-100 ${editing === p.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
-                  <td className="px-3 py-2 text-slate-700">{convenioAccounts.find(a => a.id === p.account_id)?.nome ?? '—'}</td>
-                  <td className="px-3 py-2 text-slate-700">{GRUPOS.find(g => g.field === p.tipo_orcamento)?.label ?? p.tipo_orcamento}</td>
-                  <td className="px-3 py-2 font-semibold text-blue-700">{FONTES_LABEL[p.fonte_orcamentaria as FonteOrcamentaria]}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-slate-700">{formatCurrency(p.valor)}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => startEdit(p)} disabled={fechado} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-40" title="Editar">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => deletePagamento(p)} disabled={fechado} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40" title="Excluir">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed text-sm min-w-[640px]">
+              <colgroup>
+                <col className="w-[34%]" />
+                <col className="w-[24%]" />
+                <col className="w-[14%]" />
+                <col className="w-[16%]" />
+                <col className="w-[12%]" />
+              </colgroup>
+              <thead>
+                <tr className="text-xs text-slate-500 uppercase tracking-wider bg-white">
+                  <th className="px-3 py-2 text-left font-semibold">Conta</th>
+                  <th className="px-3 py-2 text-left font-semibold">Grupo</th>
+                  <th className="px-3 py-2 text-left font-semibold">Fonte</th>
+                  <th className="px-3 py-2 text-right font-semibold">Valor</th>
+                  <th className="px-3 py-2 text-center font-semibold">Ações</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {pagamentos.map(p => (
+                  <tr key={p.id} className={`border-t border-slate-100 ${editing === p.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                    <td className="px-3 py-2 text-slate-700 truncate" title={convenioAccounts.find(a => a.id === p.account_id)?.nome ?? '—'}>
+                      {convenioAccounts.find(a => a.id === p.account_id)?.nome ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-slate-700 truncate">{GRUPOS.find(g => g.field === p.tipo_orcamento)?.label ?? p.tipo_orcamento}</td>
+                    <td className="px-3 py-2 font-semibold text-blue-700 truncate">{FONTES_LABEL[p.fonte_orcamentaria as FonteOrcamentaria]}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-700 tabular-nums">{formatCurrency(p.valor)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => startEdit(p)} disabled={fechado} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-40" title="Editar">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => deletePagamento(p)} disabled={fechado} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-40" title="Excluir">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -463,17 +437,26 @@ export default function MovimentacaoConveniosCard({
           <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Sem fonte (legado) — somente leitura</h4>
           </div>
-          <table className="w-full text-sm">
-            <tbody>
-              {legado.map(t => (
-                <tr key={t.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2 text-slate-700">{convenioAccounts.find(a => a.id === t.account_id)?.nome ?? '—'}</td>
-                  <td className="px-3 py-2 text-slate-500">{GRUPOS.find(g => g.field === t.tipo_orcamento)?.label ?? t.tipo_orcamento}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-slate-500">{formatCurrency(t.valor)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed text-sm min-w-[520px]">
+              <colgroup>
+                <col className="w-[40%]" />
+                <col className="w-[34%]" />
+                <col className="w-[26%]" />
+              </colgroup>
+              <tbody>
+                {legado.map(t => (
+                  <tr key={t.id} className="border-t border-slate-100">
+                    <td className="px-3 py-2 text-slate-700 truncate" title={convenioAccounts.find(a => a.id === t.account_id)?.nome ?? '—'}>
+                      {convenioAccounts.find(a => a.id === t.account_id)?.nome ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 truncate">{GRUPOS.find(g => g.field === t.tipo_orcamento)?.label ?? t.tipo_orcamento}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-500 tabular-nums">{formatCurrency(t.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

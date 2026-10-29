@@ -113,6 +113,9 @@ export function BtProvider({ children }: { children: ReactNode }) {
       // da âncora transposta (saldo final do BT anterior).
       const accs = sortAccounts(await listAccounts());
       await forceRecalcBtSaldos(created, accs);
+      // convenios sempre reflete o BT mais recente (agora este).
+      const { recalcAllConvenios } = await import('@/services/convenioRecalc');
+      await recalcAllConvenios();
     } catch (err) {
       console.error('Erro na transposição de saldos:', err);
     }
@@ -288,6 +291,14 @@ export function BtProvider({ children }: { children: ReactNode }) {
         // crescente) cobre todos os BTs seguintes — mesmo resultado de hoje.
         await cascadeRecalculate(remaining[0].id);
       }
+    }
+    // Recalcula TODOS os convênios a partir do BT mais recente restante:
+    // sem isso, os valores lançados no BT excluído ficam gravados em convenios.
+    try {
+      const { recalcAllConvenios } = await import('@/services/convenioRecalc');
+      await recalcAllConvenios();
+    } catch (err) {
+      console.error('Erro ao recalcular convênios após excluir BT:', err);
     }
     if (currentBt?.id === id) {
       setCurrentBt(null);
