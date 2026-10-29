@@ -54,6 +54,7 @@ export default function Movimentacao() {
   const [depData, setDepData] = useState(todayISO());
   const [depDescricao, setDepDescricao] = useState('');
   const [editingDep, setEditingDep] = useState<string | null>(null);
+  const [depCompAnterior, setDepCompAnterior] = useState(false);
 
   // Fonte orçamentária: obrigatória quando a conta selecionada é convênio
   const [convenios, setConvenios] = useState<Convenio[]>([]);
@@ -505,6 +506,7 @@ export default function Movimentacao() {
         data_lancamento: depData || currentBt.data,
         fonte_orcamentaria: isContaConvenio ? (depFonte || null) : null,
         natureza: depKind,
+        competencia_anterior: depKind === 'anulacao' ? depCompAnterior : false,
       });
       if (ok) {
         await recalcAccountSaldos(depAccountId);
@@ -516,6 +518,7 @@ export default function Movimentacao() {
         setDepValor(null);
         setDepDescricao('');
         setDepKind('deposito');
+        setDepCompAnterior(false);
         setDepFonte('');
         setDepData(todayISO());
         setTransferFlash('Lançamento atualizado.');
@@ -536,6 +539,7 @@ export default function Movimentacao() {
       tipo: 'deposito_anulacao',
       fonteOrcamentaria: isContaConvenio ? (depFonte || null) : null,
       natureza: depKind,
+      competenciaAnterior: depKind === 'anulacao' ? depCompAnterior : false,
     });
     if (ok) {
       await recalcAccountSaldos(depAccountId);
@@ -546,6 +550,7 @@ export default function Movimentacao() {
       setDepValor(null);
       setDepDescricao('');
       setDepFonte('');
+      setDepCompAnterior(false);
       setTransferFlash(isContaConvenio && depFonte
         ? `Lançamento registrado e somado ao saldo da conta e da ${fonteLabels[depFonte]}.`
         : 'Lançamento registrado e somado ao saldo da conta.');
@@ -571,6 +576,7 @@ export default function Movimentacao() {
     setDepAccountId(tx.account_id);
     // natureza gravada; fallback no texto antigo quando a coluna é nula
     setDepKind(tx.natureza ?? (tx.descricao.toLowerCase().includes('anula') ? 'anulacao' : 'deposito'));
+    setDepCompAnterior(Boolean(tx.competencia_anterior));
     setDepValor(tx.valor);
     setDepData(tx.data_lancamento || todayISO());
     setDepDescricao(tx.descricao);
@@ -968,11 +974,24 @@ export default function Movimentacao() {
               </Select>
             </Field>
             <Field label="Tipo">
-              <Select value={depKind} onChange={(e) => setDepKind(e.target.value as 'deposito' | 'anulacao')}>
+              <Select value={depKind} onChange={(e) => { setDepKind(e.target.value as 'deposito' | 'anulacao'); setDepCompAnterior(false); }}>
                 <option value="deposito">Depósito / Entrada</option>
                 <option value="anulacao">Anulação</option>
               </Select>
             </Field>
+            {depKind === 'anulacao' && (
+              <Field label="Competência">
+                <label className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 border border-slate-300 rounded-md bg-white cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={depCompAnterior}
+                    onChange={(e) => setDepCompAnterior(e.target.checked)}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  Pagamento de competência anterior
+                </label>
+              </Field>
+            )}
             {isContaConvenio && (
               <Field label="Fonte Orçamentária *">
                 <Select
@@ -1011,7 +1030,7 @@ export default function Movimentacao() {
           </div>
           <div className="flex justify-end gap-2 mt-4">
             {editingDep && (
-              <Button size="sm" variant="ghost" onClick={() => { setEditingDep(null); setDepAccountId(''); setDepKind('deposito'); setDepValor(null); setDepData(todayISO()); setDepDescricao(''); }}>
+              <Button size="sm" variant="ghost" onClick={() => { setEditingDep(null); setDepAccountId(''); setDepKind('deposito'); setDepCompAnterior(false); setDepValor(null); setDepData(todayISO()); setDepDescricao(''); }}>
                 <X className="w-4 h-4" /> Cancelar Edição
               </Button>
             )}
@@ -1051,6 +1070,11 @@ export default function Movimentacao() {
                               <span className={`font-semibold ${isAnul ? 'text-amber-700' : 'text-emerald-700'}`}>
                                 {isAnul ? 'Anulação' : 'Depósito'}
                               </span>
+                              {isAnul && d.competencia_anterior && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-semibold text-slate-600 uppercase tracking-wide">
+                                  Comp. anterior
+                                </span>
+                              )}
                               <span className="text-slate-500"> · {formatDate(d.data_lancamento)} · {d.descricao}</span>
                             </>
                           );

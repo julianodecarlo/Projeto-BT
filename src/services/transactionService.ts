@@ -89,6 +89,7 @@ export interface NewEntry {
   tipoOrcamento?: string | null;
   fonteOrcamentaria?: FonteOrcamentaria | null;
   natureza?: 'deposito' | 'anulacao' | null;
+  competenciaAnterior?: boolean;
   ordem?: number | null;
   // Quando a cadeia de saldos já é conhecida (lançamentos orçamentários), os
   // saldos vêm prontos; por padrão são derivados do saldo corrente da conta.
@@ -125,6 +126,7 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
     if (e.tipoOrcamento) payload.tipo_orcamento = e.tipoOrcamento;
     if (e.fonteOrcamentaria) payload.fonte_orcamentaria = e.fonteOrcamentaria;
     if (e.natureza) payload.natureza = e.natureza;
+    if (e.competenciaAnterior) payload.competencia_anterior = e.competenciaAnterior;
     // ordem única crescente por conta no BT: se o chamador não forneceu, deriva max+1
     if (e.ordem != null && e.ordemFornecida) {
       payload.ordem = e.ordem;
@@ -155,7 +157,7 @@ export async function insertEntry(e: NewEntry): Promise<boolean> {
 
 export async function updateTransaction(
   id: string,
-  fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento' | 'fonte_orcamentaria' | 'natureza'>>
+  fields: Partial<Pick<Transaction, 'valor' | 'descricao' | 'data_lancamento' | 'saldo_anterior' | 'saldo_final' | 'tipo_movimento' | 'fonte_orcamentaria' | 'natureza' | 'competencia_anterior'>>
 ): Promise<boolean> {
   try {
     // .select() no retorno: 0 linhas afetadas é falha, não sucesso silencioso.
