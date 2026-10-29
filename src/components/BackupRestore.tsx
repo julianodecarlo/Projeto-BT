@@ -7,6 +7,7 @@ import { Button } from './ui/Field';
 const TABLES = [
   'accounts',
   'bt_reports',
+  'bt_entradas_repasses',
   'convenios',
   'convenio_sources',
   'subalinhas',

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, CheckCircle, FileText, Save, BadgeCheck, Lock, AlertTriangle, Check } from 'lucide-react';
+import { LayoutDashboard, Wallet, FilePlus, Handshake, Scale, ArrowLeftRight, CheckCircle, FileText, Save, BadgeCheck, Lock, AlertTriangle, Check } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Modal from './ui/Modal';
 import { Button } from './ui/Field';
@@ -6,7 +6,7 @@ import { useBt } from '@/context/BtContext';
 import type { PendenciaItem } from '@/lib/validacao';
 import { hasUnsavedGuard, subscribeUnsavedGuard, discardUnsaved, runUnsavedSavers } from '@/lib/unsavedGuard';
 
-export type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'fechamento' | 'relatorios';
+export type PageKey = 'dashboard' | 'receita' | 'movimentacao' | 'convenios' | 'conciliacao' | 'entradas_repasses' | 'fechamento' | 'relatorios';
 
 interface SidebarProps {
   current: PageKey;
@@ -124,6 +124,7 @@ export default function Sidebar({ current, onNavigate }: SidebarProps) {
           { key: 'movimentacao', label: 'Movimentações', icon: FilePlus },
           { key: 'convenios', label: 'Controle de Convênios', icon: Handshake },
           { key: 'conciliacao', label: 'Conciliação Bancária', icon: Scale },
+          { key: 'entradas_repasses', label: 'Entradas e Repasses', icon: ArrowLeftRight },
           { key: 'fechamento', label: 'Fechamento Diário', icon: CheckCircle },
           { key: 'relatorios', label: 'Relatórios e PDF', icon: FileText },
         ] as { key: PageKey; label: string; icon: typeof LayoutDashboard }[]).map((item) => {

@@ -13,6 +13,7 @@ const Conciliacao = lazy(() => import('@/pages/Conciliacao'));
 const Convenios = lazy(() => import('@/pages/Convenios'));
 const Receita = lazy(() => import('@/pages/Receita'));
 const Fechamento = lazy(() => import('@/pages/Fechamento'));
+const EntradasRepasses = lazy(() => import('@/pages/EntradasRepasses'));
 const Relatorios = lazy(() => import('@/pages/Relatorios'));
 
 const PageFallback = () => (
@@ -25,6 +26,7 @@ const pageTitles: Record<PageKey, { title: string; subtitle: string; saveLabel?:
   movimentacao: { title: 'Movimentações', subtitle: 'Registro de pagamentos e recebimentos por conta', saveLabel: 'Salvar Lançamentos' },
   convenios: { title: 'Controle de Convênios', subtitle: 'Fontes orçamentárias 5/45/4/44 e vínculo financeiro' },
   conciliacao: { title: 'Conciliação Bancária', subtitle: 'Confronto entre saldo orçamentário e extrato bancário' },
+  entradas_repasses: { title: 'Entradas e Repasses', subtitle: 'Conferência informativa do mês: pagamentos e anulações (não afeta saldos)', saveLabel: 'Salvar Conferência' },
   fechamento: { title: 'Fechamento Diário', subtitle: 'Validação e encerramento do BT', saveLabel: 'Salvar Assinaturas' },
   relatorios: { title: 'Relatórios e PDF', subtitle: 'Visualização e exportação de BTs - Boletim de Tesouraria e Caixa' },
 };
@@ -79,6 +81,7 @@ function AppContent() {
             {page === 'convenios' && <Convenios />}
             {page === 'receita' && <Receita />}
             {page === 'conciliacao' && <Conciliacao />}
+            {page === 'entradas_repasses' && <EntradasRepasses />}
             {page === 'fechamento' && <Fechamento onNavigate={setPage} />}
             {page === 'relatorios' && <Relatorios onNavigate={setPage} />}
           </Suspense>
