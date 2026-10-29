@@ -53,6 +53,7 @@ export default function MovimentacaoConveniosCard({
 }: Props) {
   const [inputs, setInputs] = useState<Record<string, CellInputs>>({});
   const [savedSnapshot, setSavedSnapshot] = useState<Record<string, CellInputs>>({});
+  const [aba, setAba] = useState<BudgetType>('vigente');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -76,19 +77,8 @@ export default function MovimentacaoConveniosCard({
     [transactions]
   );
 
-  // Snapshot do que está gravado; inputs refletem o banco a cada recarga.
-  useEffect(() => {
-    const state: Record<string, CellInputs> = {};
-    for (const acc of convenioAccounts) state[acc.id] = emptyCells();
-    for (const tx of pagamentos) {
-      if (!state[tx.account_id]) state[tx.account_id] = emptyCells();
-      state[tx.account_id][tx.tipo_orcamento as BudgetType][tx.fonte_orcamentaria as FonteOrcamentaria] = String(tx.valor || '');
-    }
-    setSavedSnapshot(state);
-    setInputs(state);
-    setUnsavedGuard(GUARD_ORIGIN, false);
-  }, [convenioAccounts, pagamentos]);
-
+  // Estado "sujo" comparado ao snapshot gravado (usado também para o saver
+  // global e para NÃO sobrescrever digitação em andamento).
   const hasUnsaved = useMemo(
     () => Object.keys(inputs).some(accId => {
       const row = inputs[accId];
@@ -97,6 +87,40 @@ export default function MovimentacaoConveniosCard({
     }),
     [inputs, savedSnapshot]
   );
+  const hasUnsavedRef = useRef(false);
+  hasUnsavedRef.current = hasUnsaved;
+
+  // Snapshot do que está gravado; inputs refletem o banco SOMENTE quando não há
+  // digitação pendente — recarregar a lista pelo pai nunca apaga o que foi
+  // digitado e ainda não salvo.
+  useEffect(() => {
+    const state: Record<string, CellInputs> = {};
+    for (const acc of convenioAccounts) state[acc.id] = emptyCells();
+    for (const tx of pagamentos) {
+      if (!state[tx.account_id]) state[tx.account_id] = emptyCells();
+      state[tx.account_id][tx.tipo_orcamento as BudgetType][tx.fonte_orcamentaria as FonteOrcamentaria] = String(tx.valor || '');
+    }
+    setSavedSnapshot(state);
+    setInputs(prev => {
+      if (!hasUnsavedRef.current) return state;
+      // Preserva células digitadas; células novas/vazias ficam do snapshot.
+      const merged: Record<string, CellInputs> = {};
+      for (const accId of Object.keys(state)) {
+        const prevRow = prev[accId];
+        merged[accId] = state[accId];
+        if (prevRow) {
+          for (const g of GRUPOS) {
+            for (const f of FONTES) {
+              const prevVal = prevRow[g.field]?.[f] ?? '';
+              if (toCents(prevVal) !== toCents(state[accId][g.field][f])) merged[accId][g.field][f] = prevVal;
+            }
+          }
+        }
+      }
+      return merged;
+    });
+    if (!hasUnsavedRef.current) setUnsavedGuard(GUARD_ORIGIN, false);
+  }, [convenioAccounts, pagamentos]);
 
   useEffect(() => {
     setUnsavedGuard(GUARD_ORIGIN, hasUnsaved);
@@ -117,12 +141,12 @@ export default function MovimentacaoConveniosCard({
   useEffect(() => {
     return subscribeUnsavedGuard(() => {
       const dirtyNow = hasUnsavedGuard();
-      if (guardWasDirty.current && !dirtyNow && !saving) {
+      if (guardWasDirty.current && !dirtyNow && !hasUnsavedRef.current) {
         setInputs(savedSnapshot);
       }
       guardWasDirty.current = dirtyNow;
     });
-  }, [savedSnapshot, saving]);
+  }, [savedSnapshot]);
 
   const handleInputChange = (accId: string, field: BudgetType, fonte: FonteOrcamentaria, value: string) => {
     setInputs(prev => ({
@@ -135,20 +159,23 @@ export default function MovimentacaoConveniosCard({
     }));
   };
 
-  // Aviso (não bloqueio): projeção do saldo da fonte com os valores digitados.
-  const fontesNegativas = useMemo(() => {
+  const projectedSaldo = (conv: Convenio, fonte: FonteOrcamentaria): number => {
+    const digitado = GRUPOS.reduce((s, g) => s + toCents(inputs[conv.finance_account_id ?? '']?.[g.field]?.[fonte]), 0) / 100;
+    return toDecimal(conv[fonte]).minus(digitado).toNumber();
+  };
+
+  // Aviso (não bloqueio): fontes que ficariam negativas com a digitação atual.
+  const fontesNegativasGerais = useMemo(() => {
     const neg: string[] = [];
     for (const acc of convenioAccounts) {
       const conv = convenioPorConta.get(acc.id);
       if (!conv) continue;
       for (const fonte of FONTES) {
-        const digitado = GRUPOS.reduce((s, g) => s + toCents(inputs[acc.id]?.[g.field]?.[fonte]), 0) / 100;
-        if (toDecimal(conv[fonte]).minus(digitado).toNumber() < 0) {
-          neg.push(`${conv.nome} — ${FONTES_LABEL[fonte]}`);
-        }
+        if (projectedSaldo(conv, fonte) < 0) neg.push(`${conv.nome} — ${FONTES_LABEL[fonte]}`);
       }
     }
     return neg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convenioAccounts, convenioPorConta, inputs]);
 
   const handleSave = async () => {
@@ -221,6 +248,7 @@ export default function MovimentacaoConveniosCard({
 
   const startEdit = (tx: Transaction) => {
     setEditing(tx.id);
+    setAba((tx.tipo_orcamento ?? 'vigente') as BudgetType);
     setInputs(prev => ({
       ...prev,
       [tx.account_id]: {
@@ -244,6 +272,29 @@ export default function MovimentacaoConveniosCard({
     await recalcAccountSaldos(btId, tx.account_id, convenioAccounts.find(a => a.id === tx.account_id)?.saldo_inicial ?? 0);
     await onSaved([tx.account_id]);
   };
+
+  // Contador por aba: valor digitado não salvo OU já gravado no BT.
+  const abasComValor = useMemo(() => {
+    const set = new Set<BudgetType>();
+    for (const p of pagamentos) set.add(p.tipo_orcamento as BudgetType);
+    for (const accId of Object.keys(inputs)) {
+      for (const g of GRUPOS) {
+        if (FONTES.some(f => toCents(inputs[accId]?.[g.field]?.[f]) !== 0)) set.add(g.field);
+      }
+    }
+    return set;
+  }, [pagamentos, inputs]);
+
+  const totalASalvar = useMemo(
+    () => Object.keys(inputs).reduce((s, accId) =>
+      s + GRUPOS.reduce((s2, g) => s2 + FONTES.reduce((s3, f) => s3 + toCents(inputs[accId]?.[g.field]?.[f]), 0), 0), 0) / 100,
+    [inputs]
+  );
+
+  const totalAba = useMemo(
+    () => convenioAccounts.reduce((s, acc) => s + FONTES.reduce((s2, f) => s2 + toCents(inputs[acc.id]?.[aba]?.[f]), 0), 0) / 100,
+    [convenioAccounts, inputs, aba]
+  );
 
   if (convenioAccounts.length === 0) return null;
 
@@ -269,69 +320,101 @@ export default function MovimentacaoConveniosCard({
           <Check className="w-4 h-4" /> {flash}
         </div>
       )}
-      {fontesNegativas.length > 0 && (
+      {fontesNegativasGerais.length > 0 && (
         <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-sm text-amber-800 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <span>Atenção: os valores digitados deixam o saldo negativo de: {fontesNegativas.join('; ')}.</span>
+          <span>Atenção: os valores digitados deixam o saldo negativo de: {fontesNegativasGerais.join('; ')}.</span>
         </div>
       )}
+
+      {/* Abas por grupo orçamentário: o estado é único (trocar de aba nunca perde valores) */}
+      <div className="px-4 pt-3 border-b border-slate-200 flex gap-1">
+        {GRUPOS.map(g => {
+          const active = aba === g.field;
+          const temValor = abasComValor.has(g.field);
+          return (
+            <button
+              key={g.field}
+              onClick={() => setAba(g.field)}
+              className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+                active
+                  ? 'text-blue-700 border-blue-600 bg-blue-50/50'
+                  : 'text-slate-500 border-transparent hover:text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {g.label}
+              {temValor && !active && (
+                <span className="w-2 h-2 rounded-full bg-amber-500" title="Há valores nesta aba" />
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              <th rowSpan={2} className="px-4 py-2 text-left font-semibold w-56 border-r border-slate-200">Conta / Convênio</th>
-              {GRUPOS.map(g => (
-                <th colSpan={4} key={g.field} className="px-2 py-1.5 text-center font-semibold border-l border-slate-200">{g.label}</th>
-              ))}
-              <th colSpan={4} className="px-2 py-1.5 text-center font-semibold border-l border-slate-200 bg-blue-50/60">Saldo Atual da Fonte</th>
-            </tr>
-            <tr className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              {GRUPOS.map(g => (
-                FONTES.map(f => (
-                  <th key={`${g.field}-${f}`} className="px-1.5 py-1 text-center font-semibold border-l border-slate-100">{FONTES_LABEL[f].replace('Fonte ', 'F')}</th>
-                ))
-              ))}
+              <th className="px-4 py-2 text-left font-semibold w-56">Conta / Convênio</th>
               {FONTES.map(f => (
-                <th key={`saldo-${f}`} className="px-1.5 py-1 text-center font-semibold border-l border-slate-100 bg-blue-50/60">{FONTES_LABEL[f].replace('Fonte ', 'F')}</th>
+                <th key={f} className="px-2 py-2 text-right font-semibold">{FONTES_LABEL[f]}</th>
               ))}
+              <th className="px-3 py-2 text-right font-semibold bg-slate-100/70">Total</th>
             </tr>
           </thead>
           <tbody>
             {convenioAccounts.map(acc => {
               const conv = convenioPorConta.get(acc.id);
+              const totalLinha = FONTES.reduce((s, f) => s + toCents(inputs[acc.id]?.[aba]?.[f]), 0) / 100;
               return (
                 <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                  <td className="px-4 py-2 border-r border-slate-200">
-                    <p className="text-sm font-medium text-slate-700">{acc.nome}</p>
-                    <p className="text-xs text-slate-400">{conv?.nome ?? 'Sem convênio vinculado'}</p>
+                  <td className="px-4 py-1.5">
+                    <p className="text-sm font-medium text-slate-700 whitespace-nowrap">{acc.nome}</p>
                   </td>
-                  {GRUPOS.map(g => (
-                    FONTES.map(f => (
-                      <td key={`${acc.id}-${g.field}-${f}`} className="px-1.5 py-2 text-right border-l border-slate-100">
+                  {FONTES.map(f => {
+                    const proj = conv ? projectedSaldo(conv, f) : null;
+                    return (
+                      <td key={`${acc.id}-${aba}-${f}`} className="px-2 py-1.5 text-right">
                         <MoneyInput
-                          value={inputs[acc.id]?.[g.field]?.[f] ? parseFloat(inputs[acc.id][g.field][f]) : null}
-                          onValueChange={(v) => handleInputChange(acc.id, g.field, f, v ? String(v) : '')}
+                          value={inputs[acc.id]?.[aba]?.[f] ? parseFloat(inputs[acc.id][aba][f]) : null}
+                          onValueChange={(v) => handleInputChange(acc.id, aba, f, v ? String(v) : '')}
                           disabled={fechado}
                           placeholder="0,00"
                           className="w-24 px-1.5 py-1.5 text-xs"
                         />
-                      </td>
-                    ))
-                  ))}
-                  {FONTES.map(f => {
-                    const saldo = conv ? conv[f] : 0;
-                    return (
-                      <td key={`${acc.id}-saldo-${f}`} className={`px-2 py-2 text-right text-xs font-bold border-l border-slate-100 bg-blue-50/40 ${saldo < 0 ? 'text-red-700' : 'text-slate-700'}`}>
-                        {formatCurrency(saldo)}
+                        {proj != null && (
+                          <p className={`text-[10px] mt-0.5 ${proj < 0 ? 'text-red-700 font-semibold' : 'text-slate-400'}`}>
+                            Saldo: {formatCurrency(proj)}
+                          </p>
+                        )}
                       </td>
                     );
                   })}
+                  <td className={`px-3 py-1.5 text-right font-bold bg-slate-100/50 ${totalLinha > 0 ? 'text-slate-700' : 'text-slate-400'}`}>
+                    {formatCurrency(totalLinha)}
+                  </td>
                 </tr>
               );
             })}
+            <tr className="border-t-2 border-slate-200 bg-slate-100 font-bold">
+              <td className="px-4 py-2 text-xs text-slate-800 uppercase tracking-wide">Total da aba</td>
+              {FONTES.map(f => {
+                const tot = convenioAccounts.reduce((s, acc) => s + toCents(inputs[acc.id]?.[aba]?.[f]), 0) / 100;
+                return (
+                  <td key={`tot-${f}`} className="px-2 py-2 text-right text-xs text-slate-800">{formatCurrency(tot)}</td>
+                );
+              })}
+              <td className="px-3 py-2 text-right text-xs text-slate-800 bg-slate-200/50">{formatCurrency(totalAba)}</td>
+            </tr>
           </tbody>
         </table>
+      </div>
+
+      {/* Rodapé: total geral das três abas */}
+      <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        <p className="text-xs font-semibold text-slate-600">
+          Total a salvar neste BT: <span className="text-slate-800">{formatCurrency(totalASalvar)}</span>
+        </p>
       </div>
 
       {/* Histórico de pagamentos por fonte (editável) */}

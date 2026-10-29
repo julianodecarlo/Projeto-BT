@@ -232,8 +232,8 @@ export default function Conciliacao() {
   const getRecon = (accId: string): Reconciliation | undefined =>
     reconciliations.find(r => r.account_id === accId);
 
-  const updateRecon = async (accId: string, field: string, value: number) => {
-    if (!currentBt) return;
+  const updateRecon = async (accId: string, field: string, value: number | null) => {
+    if (!currentBt || value == null) return;
     const existing = getRecon(accId);
     const saldoOrcamentario = getAccountSaldoOrcamentario(accId);
     const pendencias = getPendencias(accId);
